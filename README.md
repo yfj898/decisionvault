@@ -110,6 +110,30 @@ Verified Cloud result: ANN and exact search selected the same top-1 episode,
 `recall@5` was `1.000`, and the perfect match from the foreign scope was excluded.
 See `docs/evidence/PHASE3_DISTRIBUTED_VECTOR_INDEX.md`.
 
+## Phase 4 — CockroachDB Cloud Managed MCP
+
+DecisionVault has also been verified through the real CockroachDB Cloud Managed
+MCP server using OAuth. A standards-compliant MCP 2025-06-18 client initialized
+`https://cockroachlabs.cloud/mcp`, discovered the server tools, and performed
+read-only calls against the same DecisionVault cluster.
+
+Verified MCP calls include:
+
+- `list_clusters` and `get_cluster`
+- `list_databases` and `list_tables`
+- `get_table_schema` for `decision_episodes`
+- `select_query` for a real persisted DecisionVault episode
+- `explain_query` for the scoped vector nearest-neighbor query
+
+The MCP schema result exposed the `VECTOR(64)` column, the real distributed
+vector index, and its cosine opclass. The MCP SELECT returned the expected failed
+`GENERIC_RETRY` episode, and the MCP EXPLAIN contained both the vector-search node
+and the DecisionVault vector index. The temporary evidence row was removed after
+verification.
+
+No OAuth token, SQL password, connection string, or cluster ID is stored in this
+repository. See `docs/evidence/PHASE4_MANAGED_MCP.md`.
+
 ## Repository status
 
 - [x] New project / isolated codebase
@@ -122,7 +146,7 @@ See `docs/evidence/PHASE3_DISTRIBUTED_VECTOR_INDEX.md`.
 - [x] Real CockroachDB Cloud cluster
 - [x] Real CockroachDB persistent episode write + fresh-process recall
 - [x] Real Distributed Vector Index query evidence
-- [ ] Managed MCP connection evidence
+- [x] Managed MCP connection evidence
 - [ ] Real Bedrock invocation evidence
 - [ ] AWS hosted demo
 - [ ] Public GitHub repository

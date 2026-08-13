@@ -59,6 +59,15 @@ evidence is recorded in `docs/evidence/PHASE3_DISTRIBUTED_VECTOR_INDEX.md`.
 
 Use the Cloud Console MCP configuration for the DecisionVault cluster.
 
+Phase 4 was verified with OAuth against the real CockroachDB Cloud Managed MCP
+endpoint. The successful evidence path used the MCP 2025-06-18 Streamable HTTP
+protocol and executed `list_clusters`, `get_cluster`, `list_databases`,
+`list_tables`, `get_table_schema`, `select_query`, and `explain_query`.
+
+The evidence demonstrates that MCP can inspect the live DecisionVault schema,
+read an actual persisted decision episode, and obtain the vector-search query
+plan. See `docs/evidence/PHASE4_MANAGED_MCP.md`.
+
 Do not commit:
 - service account API key
 - bearer token
