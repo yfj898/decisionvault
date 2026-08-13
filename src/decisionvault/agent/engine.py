@@ -16,6 +16,7 @@ class DecisionAgent:
     policy: OutcomeAwarePolicy = OutcomeAwarePolicy()
     memory_enabled: bool = True
     advisor: DecisionAdvisor | None = None
+    agent_id: str = "decision-agent"
 
     def decide(self, *, scope_id: str, situation: str) -> Decision:
         recalled = (
@@ -64,7 +65,10 @@ class DecisionAgent:
             outcome=outcome,
             effectiveness=effectiveness,
             confidence=confidence,
-            evidence={"decision_reason": decision.reason},
+            evidence={
+                "decision_reason": decision.reason,
+                "producer_agent_id": self.agent_id,
+            },
             created_at=datetime.now(timezone.utc),
         )
         self.memory.save(episode)

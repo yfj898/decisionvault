@@ -1,0 +1,67 @@
+from __future__ import annotations
+
+from decisionvault.mcp_auditor import MemoryAuditorAgent, _decode_mcp_body
+
+
+def test_empty_notification_response_is_valid():
+    assert _decode_mcp_body(b"", "application/json") == {}
+
+
+class FakeMcpClient:
+    def initialize(self):
+        return {
+            "result": {
+                "protocolVersion": "2025-06-18",
+                "serverInfo": {"name": "cockroachdb-cloud"},
+            }
+        }
+
+    def list_tools(self):
+        return {
+            "result": {
+                "tools": [
+                    {"name": "select_query"},
+                    {"name": "explain_query"},
+                ]
+            }
+        }
+
+    def call_tool(self, name, arguments):
+        assert arguments["database"] == "defaultdb"
+        if name == "select_query":
+            return {
+                "result": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "scope=shared-team producer_agent_id="
+                                "recovery-observer strategy=GENERIC_RETRY"
+                            ),
+                        }
+                    ]
+                }
+            }
+        if name == "explain_query":
+            return {
+                "result": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "vector search decision_episodes@"
+                                "decision_episodes_scope_embedding_vec_idx"
+                            ),
+                        }
+                    ]
+                }
+            }
+        raise AssertionError(name)
+
+
+def test_memory_auditor_agent_checks_live_memory_contract():
+    result = MemoryAuditorAgent(FakeMcpClient()).audit_scope(
+        scope_id="shared-team",
+        situation="payment failed after card replacement; token stale",
+    )
+    assert result.passed is True

@@ -7,7 +7,10 @@ import pytest
 from decisionvault.domain import DecisionEpisode, Outcome, Strategy
 from decisionvault.memory.cockroach import CockroachVectorMemoryStore
 from decisionvault.memory.connection import psycopg_connection_factory
-from decisionvault.memory.embedding import deterministic_text_embedding
+from decisionvault.memory.embedding import (
+    deterministic_text_embedding,
+    project_dense_embedding,
+)
 
 
 class FakeCursor:
@@ -56,6 +59,16 @@ def test_deterministic_embedding_is_stable_and_normalized():
 def test_deterministic_embedding_rejects_invalid_dimensions():
     with pytest.raises(ValueError, match="dimensions"):
         deterministic_text_embedding("case", dimensions=0)
+
+
+def test_semantic_projection_is_stable_and_normalized():
+    dense = [float(index % 17) / 17.0 for index in range(1024)]
+    first = project_dense_embedding(dense)
+    second = project_dense_embedding(dense)
+
+    assert first == second
+    assert len(first) == 64
+    assert sum(value * value for value in first) == pytest.approx(1.0)
 
 
 def test_connection_factory_requires_database_url(monkeypatch):
@@ -136,3 +149,27 @@ def test_cockroach_store_recall_maps_scoped_vector_result():
     assert recalled[0].episode.outcome == Outcome.FAILED
     assert recalled[0].similarity == pytest.approx(0.8)
     assert conn.closed is True
+
+
+def test_cockroach_store_uses_query_embedder_for_recall():
+    conn = FakeConnection(rows=[])
+    calls = []
+
+    def passage(text):
+        calls.append(("passage", text))
+        return [1.0, 0.0]
+
+    def query(text):
+        calls.append(("query", text))
+        return [0.0, 1.0]
+
+    store = CockroachVectorMemoryStore(
+        connection_factory=lambda: conn,
+        embedder=passage,
+        query_embedder=query,
+    )
+    store.recall(scope_id="scope-1", situation="semantic query", limit=5)
+
+    assert calls == [("query", "semantic query")]
+    _, params = conn.cursor_value.executions[0]
+    assert params[0] == "[0.00000000,1.00000000]"

@@ -10,7 +10,10 @@ from decisionvault.agent.engine import DecisionAgent
 from decisionvault.domain import Decision, Outcome, Strategy
 from decisionvault.memory.cockroach import CockroachVectorMemoryStore
 from decisionvault.memory.connection import psycopg_connection_factory
-from decisionvault.memory.embedding import deterministic_text_embedding
+from decisionvault.memory.embedding import (
+    NvidiaSemanticEmbedder,
+    deterministic_text_embedding,
+)
 from decisionvault.providers.nvidia import NvidiaDecisionAdvisor
 from decisionvault.ui import INDEX_HTML
 
@@ -80,12 +83,33 @@ def _authorized(event: dict[str, Any]) -> bool:
     return headers.get("x-decisionvault-token", "") == expected
 
 
-def _build_agent(*, memory_enabled: bool) -> DecisionAgent:
-    store = CockroachVectorMemoryStore(
-        connection_factory=psycopg_connection_factory(),
-        embedder=deterministic_text_embedding,
-    )
+def _build_agent(
+    *,
+    memory_enabled: bool,
+    agent_id: str = "recovery-planner",
+) -> DecisionAgent:
     nvidia_key = os.getenv("NVIDIA_API_KEY", "").strip()
+    if nvidia_key:
+        semantic = NvidiaSemanticEmbedder(
+            api_key=nvidia_key,
+            model_id=os.getenv(
+                "NVIDIA_EMBED_MODEL_ID", "nvidia/nv-embedqa-e5-v5"
+            ),
+            base_url=os.getenv(
+                "NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"
+            ),
+            timeout_seconds=float(os.getenv("NVIDIA_TIMEOUT_SECONDS", "20")),
+        )
+        store = CockroachVectorMemoryStore(
+            connection_factory=psycopg_connection_factory(),
+            embedder=semantic.embed_passage,
+            query_embedder=semantic.embed_query,
+        )
+    else:
+        store = CockroachVectorMemoryStore(
+            connection_factory=psycopg_connection_factory(),
+            embedder=deterministic_text_embedding,
+        )
     advisor = None
     if nvidia_key:
         advisor = NvidiaDecisionAdvisor(
@@ -102,6 +126,7 @@ def _build_agent(*, memory_enabled: bool) -> DecisionAgent:
         memory=store,
         memory_enabled=memory_enabled,
         advisor=advisor,
+        agent_id=agent_id,
     )
 
 
@@ -124,6 +149,7 @@ def _health() -> dict[str, Any]:
         "status": "ok",
         "memory_backend": "cockroachdb-cloud",
         "nvidia_advisor_configured": bool(os.getenv("NVIDIA_API_KEY")),
+        "semantic_embedding_configured": bool(os.getenv("NVIDIA_API_KEY")),
         "database_configured": bool(os.getenv("DATABASE_URL")),
     }
 
@@ -135,7 +161,8 @@ def _decide(body: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("scope_id and situation are required")
 
     memory_enabled = bool(body.get("memory_enabled", True))
-    decision = _build_agent(memory_enabled=memory_enabled).decide(
+    agent_id = str(body.get("agent_id", "recovery-planner")).strip()
+    decision = _build_agent(memory_enabled=memory_enabled, agent_id=agent_id).decide(
         scope_id=scope_id,
         situation=situation,
     )
@@ -148,6 +175,7 @@ def _decision_payload(decision: Decision) -> dict[str, Any]:
         "reason": decision.reason,
         "memory_influenced": decision.memory_influenced,
         "recalled_episode_ids": list(decision.recalled_episode_ids),
+        "recalled_producer_agent_ids": list(decision.recalled_producer_agent_ids),
         "model_provider": decision.model_provider,
         "model_explanation": decision.model_explanation,
     }
@@ -155,9 +183,14 @@ def _decision_payload(decision: Decision) -> dict[str, Any]:
 
 def _demo() -> dict[str, Any]:
     scope_id = f"phase7-demo-{uuid4()}"
+    producer_agent_id = "recovery-observer"
+    consumer_agent_id = "recovery-planner"
     result: dict[str, Any] = {}
     try:
-        _build_agent(memory_enabled=True).record_outcome(
+        _build_agent(
+            memory_enabled=True,
+            agent_id=producer_agent_id,
+        ).record_outcome(
             scope_id=scope_id,
             situation=DEMO_FIRST_CASE,
             decision=Decision(
@@ -168,11 +201,17 @@ def _demo() -> dict[str, Any]:
             effectiveness=0.1,
             confidence=1.0,
         )
-        memory_off = _build_agent(memory_enabled=False).decide(
+        memory_off = _build_agent(
+            memory_enabled=False,
+            agent_id=consumer_agent_id,
+        ).decide(
             scope_id=scope_id,
             situation=DEMO_SIMILAR_CASE,
         )
-        memory_on = _build_agent(memory_enabled=True).decide(
+        memory_on = _build_agent(
+            memory_enabled=True,
+            agent_id=consumer_agent_id,
+        ).decide(
             scope_id=scope_id,
             situation=DEMO_SIMILAR_CASE,
         )
@@ -183,6 +222,11 @@ def _demo() -> dict[str, Any]:
                 memory_off.strategy == Strategy.GENERIC_RETRY
                 and memory_on.strategy == Strategy.REFRESH_PAYMENT_TOKEN
                 and memory_on.memory_influenced
+            ),
+            "producer_agent_id": producer_agent_id,
+            "consumer_agent_id": consumer_agent_id,
+            "cross_agent_memory_used": (
+                producer_agent_id in memory_on.recalled_producer_agent_ids
             ),
         }
     finally:
@@ -201,11 +245,12 @@ def _record(body: dict[str, Any]) -> dict[str, Any]:
     outcome = Outcome(str(body.get("outcome", "")))
     effectiveness = float(body.get("effectiveness"))
     confidence = float(body.get("confidence", 1.0))
+    agent_id = str(body.get("agent_id", "recovery-observer")).strip()
     decision = Decision(
         strategy=strategy,
         reason=str(body.get("decision_reason", "recorded via Lambda API")),
     )
-    episode = _build_agent(memory_enabled=True).record_outcome(
+    episode = _build_agent(memory_enabled=True, agent_id=agent_id).record_outcome(
         scope_id=scope_id,
         situation=situation,
         decision=decision,
@@ -218,6 +263,7 @@ def _record(body: dict[str, Any]) -> dict[str, Any]:
         "strategy": episode.strategy.value,
         "outcome": episode.outcome.value,
         "effectiveness": episode.effectiveness,
+        "producer_agent_id": episode.evidence.get("producer_agent_id"),
     }
 
 

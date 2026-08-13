@@ -33,6 +33,7 @@ class CockroachVectorMemoryStore:
 
     connection_factory: Callable[[], object]
     embedder: Callable[[str], Vector]
+    query_embedder: Callable[[str], Vector] | None = None
 
     def save(self, episode: DecisionEpisode) -> None:
         vector = _vector_literal(self.embedder(episode.situation))
@@ -73,7 +74,8 @@ class CockroachVectorMemoryStore:
         situation: str,
         limit: int = 5,
     ) -> list[RecalledEpisode]:
-        vector = _vector_literal(self.embedder(situation))
+        embed_query = self.query_embedder or self.embedder
+        vector = _vector_literal(embed_query(situation))
         sql = """
             SELECT
                 episode_id::STRING,

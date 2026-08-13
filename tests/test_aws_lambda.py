@@ -14,6 +14,7 @@ class StubAgent:
             strategy=Strategy.REFRESH_PAYMENT_TOKEN,
             reason="recalled failed retry",
             recalled_episode_ids=("episode-1",),
+            recalled_producer_agent_ids=("recovery-observer",),
             memory_influenced=True,
             model_provider="nvidia:test",
             model_explanation="The prior retry failed, so refresh the token.",
@@ -58,7 +59,7 @@ def test_decide_function_url_shape(monkeypatch):
     monkeypatch.setattr(
         aws_lambda,
         "_build_agent",
-        lambda *, memory_enabled: StubAgent(),
+        lambda *, memory_enabled, agent_id="recovery-planner": StubAgent(),
     )
     response = aws_lambda.lambda_handler(
         {
@@ -75,6 +76,7 @@ def test_decide_function_url_shape(monkeypatch):
     assert body["strategy"] == "REFRESH_PAYMENT_TOKEN"
     assert body["memory_influenced"] is True
     assert body["model_provider"] == "nvidia:test"
+    assert body["recalled_producer_agent_ids"] == ["recovery-observer"]
 
 
 def test_bad_request_is_bounded():

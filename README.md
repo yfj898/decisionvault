@@ -1,10 +1,11 @@
 # DecisionVault
 
-**Persistent decision memory for autonomous agents.**
+**Outcome-aware shared decision memory for agent teams.**
 
 DecisionVault is a new project for the **CockroachDB × AWS Hackathon — Build with Agentic Memory**.
 
-The core claim is deliberately narrow and testable:
+The core claim is deliberately narrow and testable. DecisionVault is a reusable
+outcome-memory pattern, demonstrated end-to-end on a payment-recovery agent team:
 
 > An agent should remember not only what happened, but which strategy it used, whether it worked, and how that evidence should change the next decision.
 
@@ -12,12 +13,12 @@ The core claim is deliberately narrow and testable:
 
 The first vertical slice demonstrates:
 
-1. Session A encounters a payment-support case.
-2. With no relevant memory, the agent chooses a generic retry strategy.
-3. The strategy fails and the episode is persisted.
-4. Session B encounters a semantically similar case.
-5. The agent recalls the failed strategy and selects a different recovery strategy.
-6. A memory-disabled baseline repeats the inferior strategy.
+1. Agent A observes a payment-support recovery attempt.
+2. With no relevant memory, the default action is a generic retry.
+3. That action fails and Agent A persists the outcome plus producer provenance.
+4. Agent B later encounters a semantically similar case in the same shared scope.
+5. Agent B recalls Agent A's failed outcome and selects a different strategy.
+6. A memory-disabled Agent B repeats the inferior default strategy.
 
 The local implementation is deterministic so the memory effect is testable before cloud credentials are connected.
 
@@ -30,14 +31,14 @@ Judge / user
 AWS Lambda Function URL + DecisionVault UI
    |
    v
-CockroachDB Cloud persistent memory
+CockroachDB Cloud shared persistent memory
    +----> Distributed Vector Index recall
    +----> Managed MCP evidence path
    |
    v
 Outcome-aware deterministic policy
    |
-   +----> NVIDIA explanation-only advisor
+   +----> NVIDIA semantic embeddings + explanation-only advisor
    |
    v
 Strategy + grounded explanation
@@ -47,7 +48,7 @@ Verified competition integrations:
 
 - CockroachDB Distributed Vector Indexing
 - CockroachDB Cloud Managed MCP Server
-- NVIDIA live bounded model advisor
+- NVIDIA live semantic embeddings + bounded model advisor
 - AWS Lambda deployment
 
 ## Live demo
@@ -85,9 +86,11 @@ the strategy, and verifies that Memory OFF still repeats the default strategy.
 It removes the smoke scope unless `--keep` is supplied.
 
 Phase 2 intentionally uses a deterministic dependency-free hashing embedding so
-database persistence can be tested independently from model availability. It is
-**not** a model-embedding claim; the Bedrock embedding provider belongs to a later
-phase.
+database persistence can be tested independently from model availability. That
+embedder remains the reproducible benchmark baseline. The hosted production path
+now uses NVIDIA `nv-embedqa-e5-v5` semantic embeddings, with `passage` mode for
+stored episodes and `query` mode for recall, projected deterministically into the
+frozen CockroachDB `VECTOR(64)` contract.
 
 ## Phase 3 — Distributed Vector Index
 
@@ -135,6 +138,27 @@ The NVIDIA provider was verified live against the same bounded advisor contract
 and real CockroachDB memory. Model output still cannot select or change strategy.
 
 See `docs/evidence/PHASE5_BOUNDED_MODEL_INTEGRATION.md`.
+
+## Shared agent memory and semantic runtime
+
+DecisionVault now carries producer provenance with each outcome episode. The live
+shared-memory proof uses two distinct agent identities:
+
+```text
+Agent A · recovery-observer
+→ records FAILED GENERIC_RETRY + producer provenance
+→ CockroachDB shared scope
+→ Agent B · recovery-planner
+→ semantic recall
+→ REFRESH_PAYMENT_TOKEN
+```
+
+The same Agent B in another scope remains on `GENERIC_RETRY`, proving that shared
+memory is deliberate and scope-bounded rather than globally broadcast. The live
+CockroachDB Cloud semantic smoke uses NVIDIA `nvidia/nv-embedqa-e5-v5`; a
+paraphrased future case produced cosine similarity `0.4541`, crossed the unchanged
+`0.30` policy relevance gate, and changed Agent B's strategy. See
+`docs/evidence/SHARED_AGENT_MEMORY_SEMANTIC_RUNTIME.md`.
 
 ## Phase 6 — AWS Lambda deployment
 
@@ -270,9 +294,12 @@ repository. See `docs/evidence/PHASE4_MANAGED_MCP.md`.
 - [x] Real CockroachDB persistent episode write + fresh-process recall
 - [x] Real Distributed Vector Index query evidence
 - [x] Managed MCP connection evidence
+- [x] Reproducible Managed MCP Memory Auditor Agent
 - [x] Bounded model-advisor integration
 - [x] NVIDIA auxiliary live advisor evidence
 - [x] Real external model invocation evidence (NVIDIA; Bedrock optional)
+- [x] Real NVIDIA semantic embedding path (`passage` / `query`)
+- [x] Cross-agent outcome-memory provenance and scope isolation
 - [x] AWS Lambda hosted demo
 - [x] Responsive public judge UI
 - [x] Protected one-click Memory OFF vs Memory ON proof

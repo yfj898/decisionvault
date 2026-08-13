@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "decisionvault"
 version = "0.1.0"
-description = "Persistent decision memory for autonomous agents"
+description = "Outcome-aware shared decision memory for agent teams"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 dependencies = []

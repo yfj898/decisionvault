@@ -136,3 +136,30 @@ created an MCP session, discovered the tools, and completed all calls above.
 Therefore the Phase 4 claim is specifically that CockroachDB Cloud Managed MCP
 OAuth and the real MCP tools were executed successfully. It does not claim that
 the Codex agent wrapper path was itself error-free.
+
+## Reproducible Memory Auditor Agent follow-up
+
+The repository now includes `scripts/mcp_memory_auditor.py` and a bounded
+`MemoryAuditorAgent`. The agent initializes the official Managed MCP endpoint,
+requires the real `select_query` and `explain_query` tools, reads a scoped
+DecisionVault episode including `producer_agent_id`, and independently checks the
+nearest-neighbor query plan for the distributed vector-search node and
+`decision_episodes_scope_embedding_vec_idx`.
+
+The follow-up live run used an OAuth access token refreshed from the existing OS
+keyring grant and produced:
+
+```text
+server_initialized=True
+required_tools_present=True
+scope_memory_visible=True
+producer_provenance_visible=True
+vector_plan_visible=True
+vector_index_visible=True
+memory_auditor_agent=PASS
+auditor_rows_after_cleanup=0
+```
+
+This turns Managed MCP from a one-time verification surface into a reproducible
+agentic operational/audit workflow without putting any OAuth token or cluster ID
+in the repository.

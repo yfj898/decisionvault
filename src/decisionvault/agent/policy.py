@@ -35,6 +35,7 @@ class OutcomeAwarePolicy:
                     f"from episode {best.episode.episode_id}"
                 ),
                 recalled_episode_ids=(best.episode.episode_id,),
+                recalled_producer_agent_ids=self._producer_ids(best),
                 memory_influenced=True,
             )
 
@@ -54,6 +55,7 @@ class OutcomeAwarePolicy:
                     f"episode failed: {best.episode.episode_id}"
                 ),
                 recalled_episode_ids=(best.episode.episode_id,),
+                recalled_producer_agent_ids=self._producer_ids(best),
                 memory_influenced=True,
             )
 
@@ -62,3 +64,8 @@ class OutcomeAwarePolicy:
             reason="no sufficiently relevant outcome memory; use safe default",
             memory_influenced=False,
         )
+
+    @staticmethod
+    def _producer_ids(item: RecalledEpisode) -> tuple[str, ...]:
+        producer = str(item.episode.evidence.get("producer_agent_id", "")).strip()
+        return (producer,) if producer else ()

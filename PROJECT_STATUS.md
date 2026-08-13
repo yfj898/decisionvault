@@ -15,7 +15,7 @@ Baseline:
 8 tests PASS
 
 Current local verification:
-29 tests PASS
+34 tests PASS
 CockroachDB Cloud persistence smoke: PASS
 Fresh-process recall changed agent behavior: PASS
 Memory-off causal baseline: PASS
@@ -70,3 +70,19 @@ Phase 8 false influence rate — Memory ON: 0%
 Phase 8 cross-scope leakage rate — Memory ON: 0%
 Phase 8 NVIDIA advisor strategy invariance: 100%
 Phase 8 Cloud evidence scope cleanup: 0 rows
+Shared Agent A → Agent B local memory proof: PASS
+Shared Agent A → Agent B CockroachDB Cloud proof: PASS
+Shared-memory producer provenance visible: PASS
+Shared-memory cross-scope isolation: PASS
+Managed MCP Memory Auditor Agent live workflow: PASS
+Managed MCP auditor producer provenance visible: PASS
+Managed MCP auditor DVI EXPLAIN visible: PASS
+Managed MCP auditor Cloud cleanup: 0 rows
+NVIDIA `nv-embedqa-e5-v5` live embedding call: PASS (1024D)
+Production semantic embedding `passage` / `query` separation: PASS
+Semantic 1024D → frozen VECTOR(64) projection: PASS
+Semantic paraphrase Cloud recall similarity: 0.4541
+Semantic shared-memory strategy change: PASS
+Semantic Cloud temporary rows cleanup: PASS
+Live AWS Lambda semantic embedding configured: PASS
+Live AWS Lambda cross-agent provenance: PASS
