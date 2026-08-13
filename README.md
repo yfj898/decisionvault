@@ -117,20 +117,42 @@ agent first recalls CockroachDB memory and commits the deterministic strategy;
 an optional model advisor can only add a grounded explanation afterward. A
 provider failure is ignored and cannot change or block the committed strategy.
 
-The competition path is Amazon Bedrock with Amazon Nova Lite. Bedrock credentials
-must be supplied only through an AWS SDK credential source, including the Bedrock
-API-key environment variable `AWS_BEARER_TOKEN_BEDROCK`.
+The verified competition model path uses NVIDIA as an explanation-only provider.
+Amazon Bedrock remains an optional provider rather than a Phase 5 gate. The AWS
+competition requirement is satisfied separately by the Phase 6 Lambda deployment.
 
 ```bash
 AWS_BEARER_TOKEN_BEDROCK="<local secret>" \
 uv run python scripts/model_advisor_smoke.py bedrock --cloud-memory
 ```
 
-An NVIDIA provider is also available only as a development/ablation path. It was
-verified live against the same bounded advisor contract and real CockroachDB
-memory, but it does **not** satisfy the required Amazon Bedrock evidence.
+The NVIDIA provider was verified live against the same bounded advisor contract
+and real CockroachDB memory. Model output still cannot select or change strategy.
 
-See `docs/evidence/PHASE5_MODEL_ADVISOR_READINESS.md`.
+See `docs/evidence/PHASE5_BOUNDED_MODEL_INTEGRATION.md`.
+
+## Phase 6 — AWS Lambda deployment
+
+DecisionVault is deployed as an AWS Lambda Python 3.12 function in
+`ap-northeast-1` with a Lambda Function URL. `GET /health` is public for
+availability checks. Production POST routes require an
+`X-DecisionVault-Token` value configured only in the Lambda environment.
+
+The live deployment proved the full hosted causal path:
+
+```text
+AWS Lambda /record
+→ CockroachDB Cloud persistent episode
+→ AWS Lambda /decide
+→ CockroachDB vector recall
+→ deterministic strategy change
+→ NVIDIA bounded explanation
+```
+
+The live Memory ON call returned `REFRESH_PAYMENT_TOKEN` with
+`memory_influenced=true`; the Memory OFF control returned `GENERIC_RETRY` with
+`memory_influenced=false`. The temporary evidence scope was deleted afterward.
+See `docs/evidence/PHASE6_AWS_LAMBDA.md`.
 
 ## Phase 4 — CockroachDB Cloud Managed MCP
 
@@ -171,8 +193,8 @@ repository. See `docs/evidence/PHASE4_MANAGED_MCP.md`.
 - [x] Managed MCP connection evidence
 - [x] Bounded model-advisor integration
 - [x] NVIDIA auxiliary live advisor evidence
-- [ ] Real Amazon Bedrock invocation evidence
-- [ ] AWS hosted demo
+- [x] Real external model invocation evidence (NVIDIA; Bedrock optional)
+- [x] AWS Lambda hosted demo
 - [ ] Public GitHub repository
 - [ ] <3 minute demo video
 

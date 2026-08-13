@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import os
 
 from decisionvault.domain import Decision, RecalledEpisode
 
@@ -36,6 +37,49 @@ class BedrockTextProvider:
         max_tokens: int = 180,
         temperature: float = 0.0,
     ) -> str:
+        bearer_token = os.getenv("AWS_BEARER_TOKEN_BEDROCK", "").strip()
+        if bearer_token:
+            from urllib.request import Request, urlopen
+
+            request = Request(
+                url=(
+                    f"https://bedrock-runtime.{self.region_name}.amazonaws.com/"
+                    f"model/{self.model_id}/converse"
+                ),
+                headers={
+                    "Authorization": f"Bearer {bearer_token}",
+                    "Content-Type": "application/json",
+                },
+                data=json.dumps({
+                    "system": [
+                        {
+                            "text": (
+                                "You are a bounded decision explanation component. "
+                                "Explain the already-committed strategy using only "
+                                "the provided memory evidence. Never propose or "
+                                "select a different strategy."
+                            )
+                        }
+                    ],
+                    "messages": [
+                        {"role": "user", "content": [{"text": prompt}]}
+                    ],
+                    "inferenceConfig": {
+                        "maxTokens": max_tokens,
+                        "temperature": temperature,
+                    },
+                }).encode("utf-8"),
+                method="POST",
+            )
+            with urlopen(request, timeout=30) as response:
+                payload = json.loads(response.read())
+            parts = payload["output"]["message"]["content"]
+            return " ".join(
+                part["text"].strip()
+                for part in parts
+                if isinstance(part, dict) and part.get("text")
+            ).strip()
+
         import boto3
 
         client = boto3.client("bedrock-runtime", region_name=self.region_name)

@@ -5,8 +5,8 @@ Phase 1 — Deterministic memory vertical slice: PASS
 Phase 2 — CockroachDB Cloud persistent memory: PASS
 Phase 3 — Distributed Vector Index: PASS
 Phase 4 — CockroachDB Managed MCP: PASS
-Phase 5 — Amazon Bedrock: READY FOR BEDROCK CREDENTIAL SMOKE
-Phase 6 — AWS deployment: PENDING
+Phase 5 — Bounded model integration (NVIDIA live; Bedrock optional): PASS
+Phase 6 — AWS Lambda deployment: PASS
 Phase 7 — UI / production hardening: PENDING
 Phase 8 — Benchmark / ablation: PENDING
 Phase 9 — Demo / Devpost submission: PENDING
@@ -15,7 +15,7 @@ Baseline:
 8 tests PASS
 
 Current local verification:
-20 tests PASS
+25 tests PASS
 CockroachDB Cloud persistence smoke: PASS
 Fresh-process recall changed agent behavior: PASS
 Memory-off causal baseline: PASS
@@ -34,4 +34,15 @@ Phase 4 Cloud row cleaned after verification: PASS
 Bounded model-advisor contract: PASS
 NVIDIA auxiliary live provider authentication: PASS
 NVIDIA + CockroachDB Cloud bounded advisor smoke: PASS
-Amazon Bedrock live invocation: WAITING FOR AWS_BEARER_TOKEN_BEDROCK / AWS credential source
+Amazon Bedrock provider: OPTIONAL (not a Phase 5 gate)
+AWS Lambda Function URL handler contracts: PASS
+AWS CLI remote login / STS identity: PASS
+AWS Lambda `decisionvault-agent` active in `ap-northeast-1`: PASS
+Public Function URL `/health`: HTTP 200
+Function URL protected POST without demo token: HTTP 401
+Lambda `/record` → CockroachDB Cloud persistence: HTTP 201
+Lambda Memory ON decision: `REFRESH_PAYMENT_TOKEN`, influenced=True
+Lambda NVIDIA explanation: PASS
+Lambda Memory OFF baseline: `GENERIC_RETRY`, influenced=False
+Phase 6 Cloud evidence scope cleanup: 0 rows
+CloudWatch Lambda log group present: PASS

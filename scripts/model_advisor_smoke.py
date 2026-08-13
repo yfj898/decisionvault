@@ -36,6 +36,15 @@ def load_env_file(path: Path) -> dict[str, str]:
     return values
 
 
+def load_bedrock_env(path: Path | None) -> None:
+    if path is None or not path.exists():
+        return
+    values = load_env_file(path)
+    token = values.get("AWS_BEARER_TOKEN_BEDROCK", "")
+    if token and not os.getenv("AWS_BEARER_TOKEN_BEDROCK"):
+        os.environ["AWS_BEARER_TOKEN_BEDROCK"] = token
+
+
 def make_seeded_store(store, scope_id: str):
     agent = DecisionAgent(memory=store)
     decision = agent.decide(scope_id=scope_id, situation=FIRST_CASE)
@@ -106,7 +115,7 @@ def run_advisor(advisor, *, cloud_memory: bool) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("provider", choices=("bedrock", "nvidia"))
-    parser.add_argument("--env-file", type=Path)
+    parser.add_argument("--env-file", type=Path, default=Path(".env"))
     parser.add_argument("--nvidia-model", default="meta/llama-3.1-8b-instruct")
     parser.add_argument("--bedrock-model", default="amazon.nova-lite-v1:0")
     parser.add_argument("--bedrock-region", default="ap-northeast-1")
@@ -114,6 +123,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.provider == "bedrock":
+        load_bedrock_env(args.env_file)
         has_bedrock_api_key = bool(os.getenv("AWS_BEARER_TOKEN_BEDROCK"))
         has_aws_access_key = bool(
             os.getenv("AWS_ACCESS_KEY_ID") and os.getenv("AWS_SECRET_ACCESS_KEY")
