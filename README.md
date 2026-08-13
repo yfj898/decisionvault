@@ -63,6 +63,27 @@ python -m decisionvault.demo
 
 The local store is a competition-safe development fallback only. The submission version must prove the same behavior with CockroachDB Cloud.
 
+## Phase 2 — CockroachDB Cloud persistence
+
+Install the cloud extra and provide the CockroachDB Cloud connection string only
+through the environment:
+
+```bash
+uv pip install -e ".[dev,cloud]"
+export DATABASE_URL="<CockroachDB Cloud connection string>"
+uv run python scripts/cloud_memory_smoke.py run
+```
+
+The smoke test bootstraps the schema, writes a failed decision episode, creates a
+fresh store/agent, recalls that persisted episode, verifies that Memory ON changes
+the strategy, and verifies that Memory OFF still repeats the default strategy.
+It removes the smoke scope unless `--keep` is supplied.
+
+Phase 2 intentionally uses a deterministic dependency-free hashing embedding so
+database persistence can be tested independently from model availability. It is
+**not** a model-embedding claim; the Bedrock embedding provider belongs to a later
+phase.
+
 ## Repository status
 
 - [x] New project / isolated codebase

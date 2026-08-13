@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS decision_episodes (
     effectiveness FLOAT8 NOT NULL CHECK (effectiveness >= 0 AND effectiveness <= 1),
     confidence FLOAT8 NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
     evidence JSONB NOT NULL DEFAULT '{}'::JSONB,
-    embedding VECTOR(8) NOT NULL,
+    embedding VECTOR(64) NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
