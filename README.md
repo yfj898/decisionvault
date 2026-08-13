@@ -57,6 +57,10 @@ Public UI:
 
 https://mfcr7b2k3j7lrwr44u35i5rchq0fbncb.lambda-url.ap-northeast-1.on.aws/
 
+Public repository:
+
+https://github.com/yfj898/decisionvault
+
 The page contains no credentials. A judge/demo token is supplied separately to
 run the protected live causal proof.
 
@@ -129,10 +133,8 @@ The verified competition model path uses NVIDIA as an explanation-only provider.
 Amazon Bedrock remains an optional provider rather than a Phase 5 gate. The AWS
 competition requirement is satisfied separately by the Phase 6 Lambda deployment.
 
-```bash
-AWS_BEARER_TOKEN_BEDROCK="<local secret>" \
-uv run python scripts/model_advisor_smoke.py bedrock --cloud-memory
-```
+An optional Bedrock provider seam remains in the codebase for experimentation,
+but it is not part of the submission claim or required judge path.
 
 The NVIDIA provider was verified live against the same bounded advisor contract
 and real CockroachDB memory. Model output still cannot select or change strategy.
@@ -304,7 +306,7 @@ repository. See `docs/evidence/PHASE4_MANAGED_MCP.md`.
 - [x] Responsive public judge UI
 - [x] Protected one-click Memory OFF vs Memory ON proof
 - [x] Systematic Memory ON vs OFF benchmark / ablation
-- [ ] Public GitHub repository
+- [x] Public GitHub repository
 - [ ] <3 minute demo video
 
 ## Security

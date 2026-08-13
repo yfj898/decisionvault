@@ -86,3 +86,6 @@ Semantic shared-memory strategy change: PASS
 Semantic Cloud temporary rows cleanup: PASS
 Live AWS Lambda semantic embedding configured: PASS
 Live AWS Lambda cross-agent provenance: PASS
+Public GitHub repository `yfj898/decisionvault`: PASS
+GitHub repository visibility: PUBLIC
+GitHub MIT license detection: PASS

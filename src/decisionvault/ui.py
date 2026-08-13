@@ -28,7 +28,7 @@ INDEX_HTML = r"""<!doctype html>
   <div class="eyebrow">CockroachDB × AWS · Agentic Memory</div>
   <h1>DecisionVault</h1>
   <p class="lede">Outcome-aware persistent memory for agent teams, demonstrated on payment recovery. This live proof shows one agent recording what failed and a second agent changing behavior after recalling that outcome from CockroachDB.</p>
-  <div class="badges"><span class="badge">CockroachDB Cloud</span><span class="badge">Distributed Vector Index</span><span class="badge">Managed MCP</span><span class="badge">AWS Lambda</span><span class="badge">NVIDIA bounded advisor</span></div>
+  <div class="badges"><span class="badge">CockroachDB Cloud</span><span class="badge">Distributed Vector Index</span><span class="badge">Managed MCP</span><span class="badge">AWS Lambda</span><span class="badge">NVIDIA semantic embeddings</span><span class="badge">NVIDIA bounded advisor</span></div>
   <section class="grid">
     <div class="card"><h2>Run the live cross-agent proof</h2><p class="muted">Agent A records a temporary failed episode. Agent B then handles the same similar situation with Memory OFF and Memory ON. The server returns the comparison and deletes the temporary scope.</p>
       <label for="token">Demo access token</label><input id="token" type="password" autocomplete="off" placeholder="Paste the judge/demo token" /><button id="run" type="button">Run live memory proof</button><div id="status" class="status" role="status" aria-live="polite"></div><div class="health"><span id="healthDot" class="dot"></span><span id="healthText">Checking AWS Lambda…</span></div>
