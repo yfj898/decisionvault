@@ -89,3 +89,6 @@ Live AWS Lambda cross-agent provenance: PASS
 Public GitHub repository `yfj898/decisionvault`: PASS
 GitHub repository visibility: PUBLIC
 GitHub MIT license detection: PASS
+Devpost copy-ready submission package: PASS
+Private judge testing-instructions template: PASS
+<3 minute video storyboard / narration plan: PASS
