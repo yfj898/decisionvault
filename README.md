@@ -93,7 +93,8 @@ phase.
 - [x] CockroachDB vector schema bootstrap
 - [x] CockroachDB memory adapter seam
 - [x] Bedrock provider seam
-- [ ] Real CockroachDB Cloud cluster
+- [x] Real CockroachDB Cloud cluster
+- [x] Real CockroachDB persistent episode write + fresh-process recall
 - [ ] Real Distributed Vector Index query evidence
 - [ ] Managed MCP connection evidence
 - [ ] Real Bedrock invocation evidence

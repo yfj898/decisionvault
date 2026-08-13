@@ -2,7 +2,7 @@
 
 Phase 0 — Project bootstrap: PASS
 Phase 1 — Deterministic memory vertical slice: PASS
-Phase 2 — CockroachDB Cloud persistent memory: READY FOR CLOUD CREDENTIAL SMOKE
+Phase 2 — CockroachDB Cloud persistent memory: PASS
 Phase 3 — Distributed Vector Index: PENDING
 Phase 4 — CockroachDB Managed MCP: PENDING
 Phase 5 — Amazon Bedrock: PENDING
@@ -16,4 +16,7 @@ Baseline:
 
 Current local verification:
 14 tests PASS
-CockroachDB Cloud smoke: WAITING FOR DATABASE_URL / authorized Cloud access
+CockroachDB Cloud persistence smoke: PASS
+Fresh-process recall changed agent behavior: PASS
+Memory-off causal baseline: PASS
+Cloud smoke rows cleaned after verification: PASS
