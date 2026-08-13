@@ -8,14 +8,14 @@ Phase 4 — CockroachDB Managed MCP: PASS
 Phase 5 — Bounded model integration (NVIDIA live; Bedrock optional): PASS
 Phase 6 — AWS Lambda deployment: PASS
 Phase 7 — UI / production hardening: PASS
-Phase 8 — Benchmark / ablation: PENDING
+Phase 8 — Benchmark / ablation: PASS
 Phase 9 — Demo / Devpost submission: PENDING
 
 Baseline:
 8 tests PASS
 
 Current local verification:
-27 tests PASS
+29 tests PASS
 CockroachDB Cloud persistence smoke: PASS
 Fresh-process recall changed agent behavior: PASS
 Memory-off causal baseline: PASS
@@ -56,3 +56,17 @@ Phase 7 temporary memory cleanup: 0 rows
 Unauthorized `/demo`: HTTP 401
 Browser DOM smoke (1440x1000 + 390x844): PASS
 Security headers (CSP / nosniff / DENY / no-store): PASS
+Phase 8 local benchmark: 56/56 PASS
+Phase 8 CockroachDB Cloud benchmark: 28/28 PASS
+Phase 8 Cloud + NVIDIA advisor ablation: 7/7 PASS
+Phase 8 benefit target accuracy — Memory ON: 100%
+Phase 8 benefit target accuracy — Memory OFF: 0%
+Phase 8 failed retry repetition — Memory ON: 0%
+Phase 8 failed retry repetition — Memory OFF: 100%
+Phase 8 successful strategy reuse — Memory ON: 100%
+Phase 8 successful strategy reuse — Memory OFF: 0%
+Phase 8 control preservation — Memory ON: 100%
+Phase 8 false influence rate — Memory ON: 0%
+Phase 8 cross-scope leakage rate — Memory ON: 0%
+Phase 8 NVIDIA advisor strategy invariance: 100%
+Phase 8 Cloud evidence scope cleanup: 0 rows

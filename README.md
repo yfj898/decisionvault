@@ -185,6 +185,54 @@ demo token, CSP, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and
 `Cache-Control: no-store`. Headless Chrome DOM smoke passed at desktop and mobile
 viewport sizes. See `docs/evidence/PHASE7_UI_PRODUCTION_HARDENING.md`.
 
+## Phase 8 — Memory benchmark and ablation
+
+DecisionVault now includes a reproducible behavioral benchmark that compares the
+same cases with Memory ON and Memory OFF. The benchmark deliberately measures
+**decision behavior**, not simulated business success. Its target is whether the
+agent correctly uses outcome memory when evidence is strong and correctly ignores
+memory when evidence is weak, irrelevant, or belongs to another scope.
+
+Seven benchmark families cover failed `GENERIC_RETRY` avoidance, successful
+`REFRESH_PAYMENT_TOKEN` reuse, successful `VERIFY_BILLING_PROFILE` reuse,
+low-confidence failures, low-effectiveness successes, cross-scope isolation, and
+irrelevant-memory controls.
+
+Verified results:
+
+```text
+Local deterministic benchmark:        56 / 56 PASS
+CockroachDB Cloud benchmark:           28 / 28 PASS
+Cloud + NVIDIA advisor ablation:        7 /  7 PASS
+
+Benefit target accuracy, Memory ON:    100%
+Benefit target accuracy, Memory OFF:     0%
+Failed retry repetition, Memory ON:      0%
+Failed retry repetition, Memory OFF:   100%
+Successful strategy reuse, Memory ON:  100%
+Successful strategy reuse, Memory OFF:   0%
+Control preservation, Memory ON:       100%
+False influence rate, Memory ON:         0%
+Cross-scope leakage rate, Memory ON:     0%
+NVIDIA advisor strategy invariance:    100%
+```
+
+The Cloud benchmark uses the same CockroachDB `decision_episodes` table and
+vector recall path as the hosted application. All Phase 8 Cloud rows are deleted
+after each run; the final residual-row check is zero.
+
+Reproduce locally:
+
+```bash
+python scripts/benchmark_memory.py \
+  --backend local \
+  --variants 8 \
+  --output reports/phase8-local.json
+```
+
+Cloud and advisor runs require their normal runtime credentials and do not store
+secrets in the reports. See `docs/evidence/PHASE8_MEMORY_ABLATION.md`.
+
 ## Phase 4 — CockroachDB Cloud Managed MCP
 
 DecisionVault has also been verified through the real CockroachDB Cloud Managed
@@ -228,6 +276,7 @@ repository. See `docs/evidence/PHASE4_MANAGED_MCP.md`.
 - [x] AWS Lambda hosted demo
 - [x] Responsive public judge UI
 - [x] Protected one-click Memory OFF vs Memory ON proof
+- [x] Systematic Memory ON vs OFF benchmark / ablation
 - [ ] Public GitHub repository
 - [ ] <3 minute demo video
 
