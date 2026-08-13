@@ -5,7 +5,7 @@ Phase 1 — Deterministic memory vertical slice: PASS
 Phase 2 — CockroachDB Cloud persistent memory: PASS
 Phase 3 — Distributed Vector Index: PASS
 Phase 4 — CockroachDB Managed MCP: PASS
-Phase 5 — Amazon Bedrock: PENDING
+Phase 5 — Amazon Bedrock: READY FOR BEDROCK CREDENTIAL SMOKE
 Phase 6 — AWS deployment: PENDING
 Phase 7 — UI / production hardening: PENDING
 Phase 8 — Benchmark / ablation: PENDING
@@ -15,7 +15,7 @@ Baseline:
 8 tests PASS
 
 Current local verification:
-17 tests PASS
+20 tests PASS
 CockroachDB Cloud persistence smoke: PASS
 Fresh-process recall changed agent behavior: PASS
 Memory-off causal baseline: PASS
@@ -31,3 +31,7 @@ Managed MCP schema/index inspection: PASS
 Managed MCP DecisionVault memory SELECT: PASS
 Managed MCP EXPLAIN vector-search evidence: PASS
 Phase 4 Cloud row cleaned after verification: PASS
+Bounded model-advisor contract: PASS
+NVIDIA auxiliary live provider authentication: PASS
+NVIDIA + CockroachDB Cloud bounded advisor smoke: PASS
+Amazon Bedrock live invocation: WAITING FOR AWS_BEARER_TOKEN_BEDROCK / AWS credential source

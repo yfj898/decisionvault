@@ -79,7 +79,19 @@ DecisionVault memory, not merely being configured.
 ## Amazon Bedrock
 
 The Bedrock adapter is lazy-imported so local deterministic tests need no AWS
-dependency.
+dependency. The bounded advisor is non-authoritative: CockroachDB recall and the
+deterministic policy commit the strategy before Bedrock is called.
+
+Recommended competition smoke:
+
+```bash
+export AWS_BEARER_TOKEN_BEDROCK="<Bedrock API key>"
+uv run python scripts/model_advisor_smoke.py bedrock --cloud-memory
+```
+
+The default model is `amazon.nova-lite-v1:0` in `ap-northeast-1`. Standard AWS SDK
+credential sources (`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` or `AWS_PROFILE`)
+are also accepted. Never commit any of these values.
 
 Minimum real evidence:
 - one successful model invocation

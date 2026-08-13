@@ -110,6 +110,28 @@ Verified Cloud result: ANN and exact search selected the same top-1 episode,
 `recall@5` was `1.000`, and the perfect match from the foreign scope was excluded.
 See `docs/evidence/PHASE3_DISTRIBUTED_VECTOR_INDEX.md`.
 
+## Phase 5 — Bounded model advisor
+
+DecisionVault keeps model output outside the strategy authority boundary. The
+agent first recalls CockroachDB memory and commits the deterministic strategy;
+an optional model advisor can only add a grounded explanation afterward. A
+provider failure is ignored and cannot change or block the committed strategy.
+
+The competition path is Amazon Bedrock with Amazon Nova Lite. Bedrock credentials
+must be supplied only through an AWS SDK credential source, including the Bedrock
+API-key environment variable `AWS_BEARER_TOKEN_BEDROCK`.
+
+```bash
+AWS_BEARER_TOKEN_BEDROCK="<local secret>" \
+uv run python scripts/model_advisor_smoke.py bedrock --cloud-memory
+```
+
+An NVIDIA provider is also available only as a development/ablation path. It was
+verified live against the same bounded advisor contract and real CockroachDB
+memory, but it does **not** satisfy the required Amazon Bedrock evidence.
+
+See `docs/evidence/PHASE5_MODEL_ADVISOR_READINESS.md`.
+
 ## Phase 4 — CockroachDB Cloud Managed MCP
 
 DecisionVault has also been verified through the real CockroachDB Cloud Managed
@@ -147,7 +169,9 @@ repository. See `docs/evidence/PHASE4_MANAGED_MCP.md`.
 - [x] Real CockroachDB persistent episode write + fresh-process recall
 - [x] Real Distributed Vector Index query evidence
 - [x] Managed MCP connection evidence
-- [ ] Real Bedrock invocation evidence
+- [x] Bounded model-advisor integration
+- [x] NVIDIA auxiliary live advisor evidence
+- [ ] Real Amazon Bedrock invocation evidence
 - [ ] AWS hosted demo
 - [ ] Public GitHub repository
 - [ ] <3 minute demo video

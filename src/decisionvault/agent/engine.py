@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from uuid import uuid4
 
 from decisionvault.domain import Decision, DecisionEpisode, Outcome
 from decisionvault.memory.base import MemoryStore
 from decisionvault.agent.policy import OutcomeAwarePolicy
+from decisionvault.providers.base import DecisionAdvisor
 
 
 @dataclass(slots=True)
@@ -14,6 +15,7 @@ class DecisionAgent:
     memory: MemoryStore
     policy: OutcomeAwarePolicy = OutcomeAwarePolicy()
     memory_enabled: bool = True
+    advisor: DecisionAdvisor | None = None
 
     def decide(self, *, scope_id: str, situation: str) -> Decision:
         recalled = (
@@ -21,7 +23,28 @@ class DecisionAgent:
             if self.memory_enabled
             else []
         )
-        return self.policy.decide(recalled=recalled)
+        decision = self.policy.decide(recalled=recalled)
+        if self.advisor is None:
+            return decision
+
+        try:
+            explanation = self.advisor.explain(
+                situation=situation,
+                decision=decision,
+                recalled=recalled,
+            ).strip()
+        except Exception:
+            # The model is explicitly non-authoritative. Provider failures must
+            # never change or block the deterministic memory-based decision.
+            return decision
+
+        if not explanation:
+            return decision
+        return replace(
+            decision,
+            model_explanation=explanation,
+            model_provider=self.advisor.provider_name,
+        )
 
     def record_outcome(
         self,

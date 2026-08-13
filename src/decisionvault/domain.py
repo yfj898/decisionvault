@@ -61,3 +61,5 @@ class Decision:
     reason: str
     recalled_episode_ids: tuple[str, ...] = ()
     memory_influenced: bool = False
+    model_explanation: str | None = None
+    model_provider: str | None = None
