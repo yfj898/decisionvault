@@ -27,9 +27,11 @@ configured at deployment time.
 
 ## Endpoints
 
+- `GET /` — public judge UI
 - `GET /health`
 - `POST /record`
 - `POST /decide`
+- `POST /demo` — protected atomic Memory OFF vs Memory ON proof with cleanup
 
 The `/decide` response exposes `memory_influenced`, recalled episode IDs, the
 committed strategy, and (when available) the bounded model explanation.

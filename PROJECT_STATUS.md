@@ -7,7 +7,7 @@ Phase 3 — Distributed Vector Index: PASS
 Phase 4 — CockroachDB Managed MCP: PASS
 Phase 5 — Bounded model integration (NVIDIA live; Bedrock optional): PASS
 Phase 6 — AWS Lambda deployment: PASS
-Phase 7 — UI / production hardening: PENDING
+Phase 7 — UI / production hardening: PASS
 Phase 8 — Benchmark / ablation: PENDING
 Phase 9 — Demo / Devpost submission: PENDING
 
@@ -15,7 +15,7 @@ Baseline:
 8 tests PASS
 
 Current local verification:
-25 tests PASS
+27 tests PASS
 CockroachDB Cloud persistence smoke: PASS
 Fresh-process recall changed agent behavior: PASS
 Memory-off causal baseline: PASS
@@ -46,3 +46,13 @@ Lambda NVIDIA explanation: PASS
 Lambda Memory OFF baseline: `GENERIC_RETRY`, influenced=False
 Phase 6 Cloud evidence scope cleanup: 0 rows
 CloudWatch Lambda log group present: PASS
+Public judge UI on AWS Lambda: PASS
+Protected atomic `/demo` causal proof: PASS
+Phase 7 Memory OFF: `GENERIC_RETRY`, influenced=False
+Phase 7 Memory ON: `REFRESH_PAYMENT_TOKEN`, influenced=True
+Phase 7 recalled episode count: 1
+Phase 7 NVIDIA grounded explanation: PASS
+Phase 7 temporary memory cleanup: 0 rows
+Unauthorized `/demo`: HTTP 401
+Browser DOM smoke (1440x1000 + 390x844): PASS
+Security headers (CSP / nosniff / DENY / no-store): PASS

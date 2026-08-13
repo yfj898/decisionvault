@@ -37,6 +37,23 @@ def test_health_does_not_expose_secrets(monkeypatch):
     assert "secret" not in response["body"]
 
 
+def test_root_serves_judge_ui_without_embedding_demo_token(monkeypatch):
+    monkeypatch.setenv("DEMO_API_TOKEN", "do-not-embed-this")
+    response = aws_lambda.lambda_handler(
+        {
+            "requestContext": {"http": {"method": "GET"}},
+            "rawPath": "/",
+        },
+        None,
+    )
+    assert response["statusCode"] == 200
+    assert response["headers"]["content-type"].startswith("text/html")
+    assert response["headers"]["x-frame-options"] == "DENY"
+    assert "Memory OFF" in response["body"]
+    assert "Memory ON" in response["body"]
+    assert "do-not-embed-this" not in response["body"]
+
+
 def test_decide_function_url_shape(monkeypatch):
     monkeypatch.setattr(
         aws_lambda,
@@ -80,6 +97,20 @@ def test_post_routes_require_demo_token_when_configured(monkeypatch):
         {
             "requestContext": {"http": {"method": "POST"}},
             "rawPath": "/decide",
+            "headers": {},
+            "body": "{}",
+        },
+        None,
+    )
+    assert response["statusCode"] == 401
+
+
+def test_demo_requires_demo_token_when_configured(monkeypatch):
+    monkeypatch.setenv("DEMO_API_TOKEN", "local-demo-token")
+    response = aws_lambda.lambda_handler(
+        {
+            "requestContext": {"http": {"method": "POST"}},
+            "rawPath": "/demo",
             "headers": {},
             "body": "{}",
         },

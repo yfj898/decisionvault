@@ -24,35 +24,40 @@ The local implementation is deterministic so the memory effect is testable befor
 ## Competition architecture
 
 ```text
-User / task
+Judge / user
    |
    v
-Decision Agent
-   |
-   +----> Amazon Bedrock (reasoning / embeddings adapter)
+AWS Lambda Function URL + DecisionVault UI
    |
    v
-Memory Retrieval
-   |
-   +----> CockroachDB VECTOR similarity
-   +----> structured episodic state
-   |
-   v
-Outcome-aware policy
+CockroachDB Cloud persistent memory
+   +----> Distributed Vector Index recall
+   +----> Managed MCP evidence path
    |
    v
-Action + verified outcome
+Outcome-aware deterministic policy
+   |
+   +----> NVIDIA explanation-only advisor
    |
    v
-CockroachDB persistent episode
+Strategy + grounded explanation
 ```
 
-Planned required competition integrations:
+Verified competition integrations:
 
 - CockroachDB Distributed Vector Indexing
 - CockroachDB Cloud Managed MCP Server
-- Amazon Bedrock
-- AWS deployment (Lambda or ECS, chosen after the vertical slice is stable)
+- NVIDIA live bounded model advisor
+- AWS Lambda deployment
+
+## Live demo
+
+Public UI:
+
+https://mfcr7b2k3j7lrwr44u35i5rchq0fbncb.lambda-url.ap-northeast-1.on.aws/
+
+The page contains no credentials. A judge/demo token is supplied separately to
+run the protected live causal proof.
 
 ## Run local vertical slice
 
@@ -154,6 +159,32 @@ The live Memory ON call returned `REFRESH_PAYMENT_TOKEN` with
 `memory_influenced=false`. The temporary evidence scope was deleted afterward.
 See `docs/evidence/PHASE6_AWS_LAMBDA.md`.
 
+## Phase 7 — UI / production hardening
+
+The same AWS Lambda Function URL now serves a responsive judge-facing UI at `/`.
+The page contains no database/model credentials and asks for the demo token only
+when the user runs the protected live proof.
+
+`POST /demo` performs one atomic causal experiment:
+
+```text
+temporary failed GENERIC_RETRY episode
+→ Memory OFF on the same similar situation
+→ Memory ON on the same similar situation
+→ compare strategies
+→ delete temporary scope
+```
+
+The deployed run returned `GENERIC_RETRY` with Memory OFF and
+`REFRESH_PAYMENT_TOKEN` with Memory ON, with one recalled episode and a bounded
+NVIDIA explanation. The temporary Phase 7 scope was independently verified as
+fully cleaned afterward.
+
+Hardening verified online includes protected POST routes, `401` for a missing
+demo token, CSP, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and
+`Cache-Control: no-store`. Headless Chrome DOM smoke passed at desktop and mobile
+viewport sizes. See `docs/evidence/PHASE7_UI_PRODUCTION_HARDENING.md`.
+
 ## Phase 4 — CockroachDB Cloud Managed MCP
 
 DecisionVault has also been verified through the real CockroachDB Cloud Managed
@@ -195,6 +226,8 @@ repository. See `docs/evidence/PHASE4_MANAGED_MCP.md`.
 - [x] NVIDIA auxiliary live advisor evidence
 - [x] Real external model invocation evidence (NVIDIA; Bedrock optional)
 - [x] AWS Lambda hosted demo
+- [x] Responsive public judge UI
+- [x] Protected one-click Memory OFF vs Memory ON proof
 - [ ] Public GitHub repository
 - [ ] <3 minute demo video
 
