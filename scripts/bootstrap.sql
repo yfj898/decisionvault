@@ -21,5 +21,6 @@ ON decision_episodes (scope_id, created_at DESC);
 -- ORDER BY embedding <=> $query_vector::VECTOR
 -- LIMIT $limit;
 --
--- Before submission, create and verify a distributed vector index using the
--- syntax supported by the CockroachDB Cloud version used for the hackathon.
+-- Apply scripts/vector_index.sql after the table exists. The vector index is a
+-- separate migration so Phase 2 persistence and Phase 3 index evidence remain
+-- independently reproducible.

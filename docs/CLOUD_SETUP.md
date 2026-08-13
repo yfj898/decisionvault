@@ -33,9 +33,27 @@ The Phase 2 schema uses `VECTOR(64)` only for the deterministic hashing embedder
 Treat that dimension as migration-ready: the Bedrock integration phase must update
 the schema and stored vectors to the selected model's real embedding dimension.
 
-CockroachDB documents `VECTOR(n)` columns and the `<=>` cosine-distance operator.
-The final implementation should use a vector index appropriate for the active
-CockroachDB Cloud version and verify the plan with the current official docs.
+## Distributed Vector Index
+
+Apply the Phase 3 migration after `decision_episodes` exists:
+
+```sql
+CREATE VECTOR INDEX decision_episodes_scope_embedding_vec_idx
+ON decision_episodes (scope_id, embedding vector_cosine_ops);
+```
+
+The prefix column is intentional: DecisionVault always constrains `scope_id` to a
+single value before vector ranking. The cosine opclass matches the `<=>` operator
+used by `CockroachVectorMemoryStore.recall()`.
+
+Verify both plan selection and result quality with:
+
+```bash
+uv run python scripts/vector_index_smoke.py
+```
+
+The indexed ANN result is compared with a forced primary-index exact scan. Cloud
+evidence is recorded in `docs/evidence/PHASE3_DISTRIBUTED_VECTOR_INDEX.md`.
 
 ## Managed MCP Server
 

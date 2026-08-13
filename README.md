@@ -84,6 +84,32 @@ database persistence can be tested independently from model availability. It is
 **not** a model-embedding claim; the Bedrock embedding provider belongs to a later
 phase.
 
+## Phase 3 — Distributed Vector Index
+
+DecisionVault now uses a real CockroachDB Distributed Vector Index whose prefix
+column matches the memory isolation boundary and whose opclass matches the cosine
+distance operator used by the recall adapter:
+
+```sql
+CREATE VECTOR INDEX decision_episodes_scope_embedding_vec_idx
+ON decision_episodes (scope_id, embedding vector_cosine_ops);
+```
+
+Reproduce the Cloud verification after setting `DATABASE_URL` locally:
+
+```bash
+uv run python scripts/vector_index_smoke.py
+```
+
+The smoke creates one relevant failed episode, 192 same-scope distractors, and a
+perfect vector match in a different scope. It compares the indexed ANN top-5 with
+a primary-index exact scan, verifies the optimizer emits a `vector search` node,
+checks scope isolation, and removes all smoke rows afterward.
+
+Verified Cloud result: ANN and exact search selected the same top-1 episode,
+`recall@5` was `1.000`, and the perfect match from the foreign scope was excluded.
+See `docs/evidence/PHASE3_DISTRIBUTED_VECTOR_INDEX.md`.
+
 ## Repository status
 
 - [x] New project / isolated codebase
@@ -95,7 +121,7 @@ phase.
 - [x] Bedrock provider seam
 - [x] Real CockroachDB Cloud cluster
 - [x] Real CockroachDB persistent episode write + fresh-process recall
-- [ ] Real Distributed Vector Index query evidence
+- [x] Real Distributed Vector Index query evidence
 - [ ] Managed MCP connection evidence
 - [ ] Real Bedrock invocation evidence
 - [ ] AWS hosted demo
