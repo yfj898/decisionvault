@@ -25,6 +25,7 @@ from decisionvault.memory.embedding import (
     NvidiaSemanticEmbedder,
     deterministic_text_embedding,
 )
+from decisionvault.observability import emit_request_metric
 from decisionvault.providers.nvidia import NvidiaDecisionAdvisor
 from decisionvault.runtime_secrets import hydrate_runtime_secrets
 from decisionvault.ui import INDEX_HTML
@@ -620,7 +621,7 @@ def _record(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
     }
 
 
-def lambda_handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
+def _handle_request(event: dict[str, Any], _context: Any) -> dict[str, Any]:
     try:
         method = (
             event.get("requestContext", {})
@@ -702,3 +703,55 @@ def lambda_handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
             500,
             {"error": "internal_error", "detail": type(exc).__name__},
         )
+
+
+def _response_metric_flags(
+    route: str,
+    response: dict[str, Any],
+) -> tuple[bool, bool, bool]:
+    try:
+        payload = json.loads(response.get("body") or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return False, False, False
+    if not isinstance(payload, dict):
+        return False, False, False
+
+    if route == "/demo":
+        decision = payload.get("memory_on") or {}
+        return (
+            bool(decision.get("memory_influenced")),
+            bool(decision.get("memory_conflict")),
+            False,
+        )
+    if route == "/governance-demo":
+        decision = payload.get("decision") or {}
+        return (
+            bool(decision.get("memory_influenced")),
+            bool(decision.get("memory_conflict")),
+            False,
+        )
+    return (
+        bool(payload.get("memory_influenced")),
+        bool(payload.get("memory_conflict")),
+        bool(payload.get("idempotent_replay")),
+    )
+
+
+def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
+    started = time.monotonic()
+    response = _handle_request(event, context)
+    try:
+        route = str(event.get("rawPath", "/")).rstrip("/") or "/"
+        influenced, conflict, replay = _response_metric_flags(route, response)
+        emit_request_metric(
+            route=route,
+            status_code=int(response.get("statusCode", 500)),
+            latency_ms=(time.monotonic() - started) * 1000.0,
+            memory_influenced=influenced,
+            memory_conflict=conflict,
+            idempotent_replay=replay,
+        )
+    except Exception:
+        # Observability is non-authoritative and cannot change the API result.
+        pass
+    return response

@@ -453,6 +453,11 @@ liveness; `/health/ready` actively probes Secrets Manager, CockroachDB, and the
 production E5-v5 embedding endpoint and caches the result for 30 seconds per warm
 Lambda process.
 
+Each hosted request also emits a low-cardinality CloudWatch EMF event under the
+`DecisionVault` namespace. Request/error counts, latency, memory influence,
+conflict abstention, and idempotent replay are measurable without logging scope
+IDs, episode IDs, agent identities, situations, tokens, or model text.
+
 Never commit:
 
 - CockroachDB connection strings

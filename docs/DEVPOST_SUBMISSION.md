@@ -221,6 +221,8 @@ reproducibly.
   grants, and execution-receipt signing key; Lambda env keeps only the secret ARN.
 - Separate liveness/readiness endpoints, bounded DB timeouts, and verified
   CockroachDB `40001` full-transaction retry behavior.
+- CloudWatch EMF observability for request/error count, latency, memory
+  influence/conflict, and idempotent replay without high-cardinality memory data.
 - Real AWS Lambda judge-facing application.
 - One-click Memory OFF vs Memory ON causal proof.
 - Systematic benchmark showing benefit, false-influence, isolation, and model-

@@ -15,7 +15,7 @@ Baseline:
 8 tests PASS
 
 Current local verification:
-72 tests PASS
+73 tests PASS
 CockroachDB Cloud persistence smoke: PASS
 Fresh-process recall changed agent behavior: PASS
 Memory-off causal baseline: PASS
@@ -163,3 +163,8 @@ Readiness Secrets Manager probe: PASS
 Readiness CockroachDB probe: PASS
 Readiness E5-v5 probe: PASS
 Readiness warm-cache regression: PASS
+CloudWatch EMF structured log events: PASS
+CloudWatch `DecisionVault` metric namespace: PASS
+CloudWatch request/error/latency metrics materialized: PASS
+CloudWatch memory-influence/conflict/idempotent-replay metrics materialized: PASS
+Observability sensitive/high-cardinality field scan: PASS
