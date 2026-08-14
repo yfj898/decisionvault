@@ -6,6 +6,16 @@ from datetime import datetime, timedelta, timezone
 from decisionvault.domain import DecisionAction, DecisionEpisode, Outcome, Strategy
 
 
+# Fixed server-owned identities used only by the production semantic benchmark.
+# Public agent routes never accept caller-supplied agent_id, so these identities
+# cannot be impersonated through the API. Keeping the set explicit (rather than
+# using a prefix wildcard) lets runtime security reconciliation remain enabled
+# while a live benchmark is in progress.
+PRODUCTION_BENCHMARK_PRODUCER_AGENT_IDS = tuple(
+    f"decisionvault-semantic-benchmark-{index}" for index in range(6)
+)
+
+
 @dataclass(frozen=True, slots=True)
 class SemanticSeed:
     producer_agent_id: str

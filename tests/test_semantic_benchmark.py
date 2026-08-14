@@ -1,5 +1,8 @@
 from decisionvault.domain import DecisionAction
-from decisionvault.semantic_benchmark import production_semantic_cases
+from decisionvault.semantic_benchmark import (
+    PRODUCTION_BENCHMARK_PRODUCER_AGENT_IDS,
+    production_semantic_cases,
+)
 
 
 def test_production_semantic_benchmark_is_hand_authored_and_covers_governance():
@@ -30,4 +33,13 @@ def test_production_semantic_benchmark_is_hand_authored_and_covers_governance():
     assert all(
         case.expected_action == DecisionAction.ABSTAIN
         for case in abstain_cases.values()
+    )
+
+
+def test_production_benchmark_has_six_explicit_server_owned_producer_ids():
+    assert len(PRODUCTION_BENCHMARK_PRODUCER_AGENT_IDS) == 6
+    assert len(set(PRODUCTION_BENCHMARK_PRODUCER_AGENT_IDS)) == 6
+    assert all(
+        item.startswith("decisionvault-semantic-benchmark-")
+        for item in PRODUCTION_BENCHMARK_PRODUCER_AGENT_IDS
     )

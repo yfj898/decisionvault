@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import json
 import os
 from pathlib import Path
@@ -16,7 +16,11 @@ from decisionvault.domain import Strategy
 from decisionvault.memory.cockroach import CockroachVectorMemoryStore
 from decisionvault.memory.connection import psycopg_connection_factory
 from decisionvault.memory.embedding import NvidiaSemanticEmbedder, deterministic_text_embedding
-from decisionvault.semantic_benchmark import production_semantic_cases, seed_episode
+from decisionvault.semantic_benchmark import (
+    PRODUCTION_BENCHMARK_PRODUCER_AGENT_IDS,
+    production_semantic_cases,
+    seed_episode,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -118,6 +122,19 @@ def main() -> int:
         for case_index, case in enumerate(production_semantic_cases()):
             query_scope = f"{run_prefix}-{case.case_id}"
             episode_ids: list[str] = []
+            producer_aliases: dict[str, str] = {}
+
+            def benchmark_producer(original: str) -> str:
+                alias = producer_aliases.get(original)
+                if alias is not None:
+                    return alias
+                alias = PRODUCTION_BENCHMARK_PRODUCER_AGENT_IDS[
+                    len(producer_aliases)
+                    % len(PRODUCTION_BENCHMARK_PRODUCER_AGENT_IDS)
+                ]
+                producer_aliases[original] = alias
+                return alias
+
             for seed_index, seed in enumerate(case.seeds):
                 scope_id = (
                     query_scope
@@ -134,7 +151,12 @@ def main() -> int:
                     seed_episode(
                         episode_id=episode_id,
                         scope_id=scope_id,
-                        seed=seed,
+                        seed=replace(
+                            seed,
+                            producer_agent_id=benchmark_producer(
+                                seed.producer_agent_id
+                            ),
+                        ),
                         supersedes_episode_id=supersedes,
                     )
                 )
@@ -155,7 +177,8 @@ def main() -> int:
                 and (case.expected_conflict is None or decision.memory_conflict == case.expected_conflict)
                 and (
                     case.expected_producer is None
-                    or case.expected_producer in decision.recalled_producer_agent_ids
+                    or benchmark_producer(case.expected_producer)
+                    in decision.recalled_producer_agent_ids
                 )
                 and off.strategy == Strategy.GENERIC_RETRY
                 and not off.memory_influenced

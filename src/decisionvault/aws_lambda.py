@@ -60,6 +60,7 @@ from decisionvault.providers.nvidia import NvidiaDecisionAdvisor
 from decisionvault.providers.http_security import validate_nvidia_base_url
 from decisionvault.rate_limit import CockroachRateLimiter
 from decisionvault.runtime_secrets import hydrate_runtime_secrets
+from decisionvault.semantic_benchmark import PRODUCTION_BENCHMARK_PRODUCER_AGENT_IDS
 from decisionvault.ui import INDEX_HTML
 
 
@@ -105,7 +106,12 @@ MAX_REQUEST_BODY_BYTES = 16 * 1024
 MAX_SCOPE_ID_CHARS = 256
 MAX_SITUATION_CHARS = 4096
 INTERNAL_PRODUCER_AGENT_IDS = frozenset(
-    {"recovery-observer", "recovery-observer-a", "recovery-observer-b"}
+    {
+        "recovery-observer",
+        "recovery-observer-a",
+        "recovery-observer-b",
+        *PRODUCTION_BENCHMARK_PRODUCER_AGENT_IDS,
+    }
 )
 
 
@@ -302,13 +308,7 @@ def _producer_trust_registry() -> dict[str, float]:
     }
     # These identities are server-owned by the atomic judge demos and cannot be
     # supplied through the public /record or /decide APIs.
-    registry.update(
-        {
-            "recovery-observer": 1.0,
-            "recovery-observer-a": 1.0,
-            "recovery-observer-b": 1.0,
-        }
-    )
+    registry.update({agent_id: 1.0 for agent_id in INTERNAL_PRODUCER_AGENT_IDS})
     return registry
 
 
