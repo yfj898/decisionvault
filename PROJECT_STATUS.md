@@ -17,6 +17,7 @@ Baseline:
 Current local verification:
 178 tests PASS
 Post-adaptive Phase 8 local benchmark: 56/56 PASS
+GitHub Actions run `31792492469` (`5e5c3f0`): SUCCESS after CI pytest root-import parity fix
 Governed Adaptive Memory v6 local implementation: PASS
 L0 request-local Working Memory: PASS
 L1 governed DecisionEpisode/current-head evidence remains authoritative: PASS

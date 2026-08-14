@@ -2,7 +2,7 @@
 
 Date: 2026-08-14
 
-Status: PASS (GitHub CI recorded after push)
+Status: PASS
 
 ## Claim boundary
 
@@ -189,3 +189,30 @@ total                                       0
 This closes the v6 production evidence while retaining fail-closed readiness,
 append-only revocation audit, embedding-revision isolation, signed
 snapshot/receipt execution binding, and deterministic conflict abstention.
+
+## GitHub CI
+
+The first v6 push reached GitHub successfully but CI failed during pytest
+collection because Actions invokes `uv run --frozen pytest -q`: the project root
+was not explicitly present in pytest `pythonpath`, so three tests importing
+top-level `scripts.*` helpers could not resolve that package. This matched the
+earlier local `uv run pytest` environment difference and was not a runtime or
+test-logic failure.
+
+`pyproject.toml` now declares both `src` and `.` in pytest `pythonpath`. The exact
+CI command was reproduced locally before the follow-up push:
+
+```text
+uv sync --frozen --extra dev                 PASS
+uv run --frozen pytest -q                    178 / 178 PASS
+tracked credential-shape scan                PASS
+```
+
+Follow-up GitHub Actions evidence:
+
+```text
+run                                         31792492469
+commit                                      5e5c3f0
+workflow                                    CI
+conclusion                                  SUCCESS
+```
