@@ -217,6 +217,8 @@ reproducibly.
   separate migration/admin responsibility.
 - Dedicated non-root AWS deployer identity restricted to the existing
   DecisionVault Lambda Get/Update operations.
+- AWS Secrets Manager for the hosted database URL, model key, judge token, agent
+  grants, and execution-receipt signing key; Lambda env keeps only the secret ARN.
 - Real AWS Lambda judge-facing application.
 - One-click Memory OFF vs Memory ON causal proof.
 - Systematic benchmark showing benefit, false-influence, isolation, and model-

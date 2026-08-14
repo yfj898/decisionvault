@@ -18,20 +18,22 @@ advisor cannot change the committed strategy.
 - `POST /record` and `/decide`: protected by `X-DecisionVault-Agent-Token`, with
   server-side identity / scope / permission grants
 
-Required Lambda environment variables:
+Hosted Lambda environment variables:
 
-- `DATABASE_URL` — CockroachDB Cloud connection string
-- `NVIDIA_API_KEY` — NVIDIA API key
+- `DECISIONVAULT_SECRET_ARN` — ARN of the single AWS Secrets Manager JSON object
+  containing the sensitive runtime values
 - `NVIDIA_MODEL_ID=meta/llama-3.1-8b-instruct`
 - `NVIDIA_EMBED_MODEL_ID=nvidia/nv-embedqa-e5-v5`
-- `DEMO_API_TOKEN` — random deployment-only token for the atomic judge demos
-- `AGENT_AUTH_JSON` — JSON object keyed by SHA-256 digests of opaque agent
-  tokens; grants bind `agent_id`, scope prefixes, permissions, and trust
-- `EXECUTION_RECEIPT_SECRET` — deployment-only HMAC key used to sign and verify
-  payment-recovery sandbox execution receipts
+- `NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1`
+- `NVIDIA_TIMEOUT_SECONDS`
 
-Do not put any credential in source control. Lambda environment variables are
-configured at deployment time.
+The referenced secret stores `DATABASE_URL`, `NVIDIA_API_KEY`, `DEMO_API_TOKEN`,
+`AGENT_AUTH_JSON`, and `EXECUTION_RECEIPT_SECRET`. The Lambda execution role is
+granted `secretsmanager:GetSecretValue` only on that secret ARN.
+
+Do not put any credential in source control. Local ignored deployment files may
+hold bootstrap copies, but the hosted function resolves sensitive values from
+Secrets Manager at runtime.
 
 ## Endpoints
 

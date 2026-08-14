@@ -73,7 +73,8 @@ def test_health_does_not_expose_secrets(monkeypatch):
     assert response["statusCode"] == 200
     assert body["database_configured"] is True
     assert body["nvidia_advisor_configured"] is True
-    assert "secret" not in response["body"]
+    assert "postgresql://secret" not in response["body"]
+    assert "secret-key" not in response["body"]
 
 
 def test_root_serves_judge_ui_without_embedding_demo_token(monkeypatch):

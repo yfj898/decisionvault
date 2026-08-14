@@ -15,7 +15,7 @@ Baseline:
 8 tests PASS
 
 Current local verification:
-63 tests PASS
+66 tests PASS
 CockroachDB Cloud persistence smoke: PASS
 Fresh-process recall changed agent behavior: PASS
 Memory-off causal baseline: PASS
@@ -146,3 +146,11 @@ Least-privilege hosted app regression: PASS
 Dedicated non-root AWS `decisionvault-deployer` identity: PASS
 Restricted deployer Lambda code/configuration update: PASS
 Restricted deployer IAM administration probe: AccessDenied
+AWS Secrets Manager runtime secret created: PASS
+Lambda execution role scoped `GetSecretValue`: PASS
+Lambda sensitive environment keys removed: PASS
+Hosted runtime reports `aws-secrets-manager`: PASS
+Secrets Manager `/demo` regression: PASS
+Secrets Manager `/governance-demo` regression: PASS
+Secrets Manager verified execution/record/decision regression: PASS
+Secrets Manager temporary rows cleanup: 0 rows

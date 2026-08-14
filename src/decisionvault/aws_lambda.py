@@ -25,6 +25,7 @@ from decisionvault.memory.embedding import (
     deterministic_text_embedding,
 )
 from decisionvault.providers.nvidia import NvidiaDecisionAdvisor
+from decisionvault.runtime_secrets import hydrate_runtime_secrets
 from decisionvault.ui import INDEX_HTML
 
 
@@ -223,16 +224,24 @@ def _delete_scope(scope_id: str) -> None:
 
 
 def _health() -> dict[str, Any]:
+    managed_secret = bool(os.getenv("DECISIONVAULT_SECRET_ARN", "").strip())
     return {
         "service": "decisionvault",
         "status": "ok",
         "memory_backend": "cockroachdb-cloud",
-        "nvidia_advisor_configured": bool(os.getenv("NVIDIA_API_KEY")),
-        "semantic_embedding_configured": bool(os.getenv("NVIDIA_API_KEY")),
-        "database_configured": bool(os.getenv("DATABASE_URL")),
-        "execution_receipt_signing_configured": bool(
-            os.getenv("EXECUTION_RECEIPT_SECRET", "").strip()
+        "database_configured": managed_secret or bool(os.getenv("DATABASE_URL")),
+        "nvidia_advisor_configured": managed_secret
+        or bool(os.getenv("NVIDIA_API_KEY")),
+        "semantic_embedding_configured": managed_secret
+        or bool(os.getenv("NVIDIA_API_KEY")),
+        "execution_receipt_signing_configured": managed_secret
+        or bool(os.getenv("EXECUTION_RECEIPT_SECRET", "").strip()),
+        "runtime_secret_source": (
+            "aws-secrets-manager"
+            if managed_secret
+            else "environment"
         ),
+        "runtime_secret_reference_configured": managed_secret,
     }
 
 
@@ -550,6 +559,8 @@ def lambda_handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
         if method == "GET" and path == "/health":
             return _json_response(200, _health())
 
+        if method == "POST":
+            hydrate_runtime_secrets()
         body = _request_body(event)
         if method == "POST" and path == "/decide":
             scope_id = str(body.get("scope_id", "")).strip()

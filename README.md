@@ -441,6 +441,11 @@ identity whose policy is scoped to Get/Update operations on the existing
 bootstrap still required a privileged account; the restricted deployer is used
 for subsequent routine releases.
 
+Sensitive hosted runtime configuration is stored in AWS Secrets Manager rather
+than directly in Lambda environment variables. The Lambda execution role can
+read only the single DecisionVault runtime secret; the function environment
+contains the secret ARN plus non-sensitive model/runtime settings.
+
 Never commit:
 
 - CockroachDB connection strings

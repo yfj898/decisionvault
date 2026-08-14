@@ -283,13 +283,8 @@ fully solved:
   than cryptographically/transactionally bound to an execution receipt;
 - the token-grant layer is a compact hackathon authorization mechanism, not
   enterprise IAM;
-- Lambda secrets still use environment configuration rather than a managed
-  secret-rotation service;
 - `/health` primarily reports configuration/liveness and is not yet a full
   CockroachDB + NVIDIA readiness probe;
-- the application database identity has not yet been reduced to least privilege;
-- AWS deployment administration is still performed from a highly privileged
-  login rather than a dedicated least-privilege deployer role;
 - large-scale concurrent writer, retry, rate-limit, and load evidence remains a
   future production-hardening task.
 
