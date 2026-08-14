@@ -24,6 +24,12 @@ L3 threshold calibration: minimum effective confidence 0.15→0.30 / synthetic s
 LONG_TERM strong-memory influence window at calibrated 0.30: PRIVATE≈121d / TEAM≈197d / GLOBAL≈228d before 365d hard expiry
 Post-calibration real adaptive CockroachDB+NVIDIA smoke: 13/13 PASS / cleanup 0
 Post-calibration production semantic benchmark: 14/14 PASS
+Performance / quality production deployment: PASS / exact source commit `82ed977` / Lambda Active + Successful / CodeSha256 matched
+Performance / quality hosted readiness: HTTP 200 / identity isolated=True / outbox schema=True / scope control=True / adaptive current=True / errors=0
+Performance / quality hosted `/demo`: HTTP 200 / GENERIC_RETRY→REFRESH_PAYMENT_TOKEN / influenced=True / cross-agent=True / cleaned
+Performance / quality hosted `/governance-demo`: HTTP 200 / ABSTAIN / executable=false / CONFLICT_ABSTAIN / cleaned
+Performance / quality final production memory rows: all 8 memory/outbox tables = 0
+GitHub Actions run `31801887048` (`82ed977`): SUCCESS for performance/cost/memory-quality source commit
 Governed Adaptive Memory v7 local hardening: PASS
 Governed Adaptive Memory v7 production cutover: PASS
 Signing-key ID + retained verification keyring / legacy-keyless compatibility: PASS

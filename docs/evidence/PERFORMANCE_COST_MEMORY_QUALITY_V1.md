@@ -1,6 +1,6 @@
 # Performance, Cost, and Long-Term Memory Quality v1
 
-Status: **LOCAL PASS / REAL COCKROACH+NVIDIA PASS / PRODUCTION DEPLOYMENT PENDING**
+Status: **PRODUCTION PASS**
 
 ## Scope
 
@@ -143,8 +143,51 @@ guardrail.
 - adaptive smoke cleanup: **0 temporary rows**;
 - production semantic benchmark after calibration: **14/14 PASS**.
 
-## Remaining gate
+## Production deployment proof
 
-Before marking this pass production-complete, deploy the exact committed Lambda
-source and rerun hosted readiness, demo/governance regression, and final memory
-row cleanup. No schema or secret migration is required for this pass.
+The performance/calibration source was frozen and pushed as:
+
+- commit: `82ed977` (`perf: calibrate memory runtime and quality`);
+- GitHub Actions run `31801887048`: **SUCCESS**;
+- Lambda package built from that clean commit;
+- deployed Lambda state: **Active / Successful**;
+- deployed `CodeSha256` exactly matched the locally built ZIP.
+
+Hosted post-deploy regression:
+
+- `/health/ready`: **HTTP 200 / ready**;
+- runtime/consolidator identity isolation: **true**;
+- consolidation outbox schema: **true**;
+- memory scope control: **true**;
+- adaptive memory currentness: **true**;
+- readiness errors: **0**;
+- `/demo`: **HTTP 200**;
+- Memory OFF: `GENERIC_RETRY`;
+- Memory ON: `REFRESH_PAYMENT_TOKEN`;
+- Memory ON influenced: **true**;
+- cross-agent memory used: **true**;
+- demo cleanup: **true**;
+- `/governance-demo`: **HTTP 200**;
+- action: `ABSTAIN`;
+- executable: **false**;
+- resolution: `CONFLICT_ABSTAIN`;
+- conflict: **true**;
+- governance cleanup: **true**.
+
+Final production row audit after hosted verification:
+
+```text
+decision_episodes=0
+decision_memory_heads=0
+decision_memory_revocations=0
+decision_memory_consolidation_candidates=0
+decision_strategy_effectiveness=0
+decision_governed_memories=0
+decision_governed_memory_support=0
+decision_memory_consolidation_outbox=0
+production_memory_rows_total=0
+```
+
+No schema migration or secret rotation was required for this pass. The runtime
+optimization changes only provider/connection reuse, while the calibrated L3
+confidence threshold is an application-level resolver guardrail.
