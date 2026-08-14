@@ -8,6 +8,7 @@ from uuid import uuid4
 from decisionvault.adaptive_memory import WorkingMemory
 from decisionvault.domain import Decision, DecisionAction, DecisionEpisode, Outcome
 from decisionvault.memory.base import MemoryStore
+from decisionvault.memory_telemetry import build_memory_quality_telemetry
 from decisionvault.agent.policy import OutcomeAwarePolicy
 from decisionvault.providers.base import DecisionAdvisor
 
@@ -71,6 +72,23 @@ class DecisionAgent:
             recalled=recalled,
             adaptive_memories=adaptive_memories,
             context_tags=working.context_tags,
+        )
+        scope_level_resolver = getattr(self.memory, "scope_level_resolver", None)
+        scope_level = (
+            scope_level_resolver(scope_id).value
+            if callable(scope_level_resolver)
+            else "UNKNOWN"
+        )
+        decision = replace(
+            decision,
+            memory_quality_telemetry=build_memory_quality_telemetry(
+                decision=decision,
+                policy=self.policy,
+                recalled=recalled,
+                adaptive_memories=adaptive_memories,
+                context_tags=working.context_tags,
+                scope_level=scope_level,
+            ),
         )
         if self.advisor is None or decision.action == DecisionAction.ABSTAIN:
             return decision

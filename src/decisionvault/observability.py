@@ -63,6 +63,10 @@ def emit_memory_metric(
     cross_layer_conflict: int = 0,
     adaptive_hit: int = 0,
     secret_refresh_failure: int = 0,
+    quality_decision_observed: int = 0,
+    quality_outcome_observed: int = 0,
+    quality_decision_write_failure: int = 0,
+    quality_outcome_write_failure: int = 0,
 ) -> None:
     """Emit fixed-name, low-cardinality memory-health metrics.
 
@@ -82,6 +86,10 @@ def emit_memory_metric(
         "CrossLayerConflictCount": int(cross_layer_conflict),
         "AdaptiveMemoryHitCount": int(adaptive_hit),
         "SecretRefreshFailureCount": int(secret_refresh_failure),
+        "MemoryQualityDecisionObservedCount": int(quality_decision_observed),
+        "MemoryQualityOutcomeObservedCount": int(quality_outcome_observed),
+        "MemoryQualityDecisionWriteFailureCount": int(quality_decision_write_failure),
+        "MemoryQualityOutcomeWriteFailureCount": int(quality_outcome_write_failure),
     }
     event: dict[str, Any] = {
         "_aws": {

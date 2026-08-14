@@ -47,6 +47,34 @@ def alarm_definitions(*, function_name: str) -> tuple[dict[str, Any], ...]:
                 {"Name": "MemoryEvent", "Value": "consolidation_retry_drain"}
             ],
         },
+        {
+            **common,
+            "AlarmName": f"{function_name}-memory-quality-decision-write-failure",
+            "MetricName": "MemoryQualityDecisionWriteFailureCount",
+            "Statistic": "Sum",
+            "Threshold": 1.0,
+            "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+            "Dimensions": [
+                {
+                    "Name": "MemoryEvent",
+                    "Value": "memory_quality_decision_write_failure",
+                }
+            ],
+        },
+        {
+            **common,
+            "AlarmName": f"{function_name}-memory-quality-outcome-write-failure",
+            "MetricName": "MemoryQualityOutcomeWriteFailureCount",
+            "Statistic": "Sum",
+            "Threshold": 1.0,
+            "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+            "Dimensions": [
+                {
+                    "Name": "MemoryEvent",
+                    "Value": "memory_quality_outcome_write_failure",
+                }
+            ],
+        },
     )
 
 
@@ -238,6 +266,62 @@ def dashboard_body(*, function_name: str, region: str) -> str:
                                 ),
                                 "label": "MemoryConflictCount",
                                 "id": "memory_conflict",
+                            }
+                        ],
+                    ],
+                },
+            },
+            {
+                "type": "metric",
+                "width": 12,
+                "height": 6,
+                "properties": {
+                    "title": "Memory-quality telemetry",
+                    "region": region,
+                    "period": 300,
+                    "metrics": [
+                        [
+                            {
+                                "expression": (
+                                    "SEARCH('{DecisionVault,MemoryEvent} "
+                                    "MetricName=\"MemoryQualityDecisionObservedCount\"', "
+                                    "'Sum', 300)"
+                                ),
+                                "label": "Decision telemetry",
+                                "id": "quality_decisions",
+                            }
+                        ],
+                        [
+                            {
+                                "expression": (
+                                    "SEARCH('{DecisionVault,MemoryEvent} "
+                                    "MetricName=\"MemoryQualityOutcomeObservedCount\"', "
+                                    "'Sum', 300)"
+                                ),
+                                "label": "Verified outcome telemetry",
+                                "id": "quality_outcomes",
+                            }
+                        ],
+                        [
+                            {
+                                "expression": (
+                                    "SEARCH('{DecisionVault,MemoryEvent} "
+                                    "MetricName=\"MemoryQualityDecisionWriteFailureCount\"', "
+                                    "'Sum', 300)"
+                                ),
+                                "label": "Decision write failures",
+                                "id": "quality_decision_failures",
+                            }
+                        ],
+                        [
+                            {
+                                "expression": (
+                                    "SEARCH('{DecisionVault,MemoryEvent} "
+                                    "MetricName=\"MemoryQualityOutcomeWriteFailureCount\"', "
+                                    "'Sum', 300)"
+                                ),
+                                "label": "Outcome write failures",
+                                "id": "quality_outcome_failures",
                             }
                         ],
                     ],

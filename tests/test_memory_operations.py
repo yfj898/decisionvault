@@ -12,6 +12,8 @@ def test_memory_operations_alarms_cover_deferred_secret_and_backlog_failures():
         "ConsolidationDeferredCount",
         "SecretRefreshFailureCount",
         "ConsolidationOutboxBacklog",
+        "MemoryQualityDecisionWriteFailureCount",
+        "MemoryQualityOutcomeWriteFailureCount",
     }
     assert all(alarm["Namespace"] == "DecisionVault" for alarm in alarms)
     assert all(alarm["TreatMissingData"] == "notBreaching" for alarm in alarms)
@@ -27,8 +29,11 @@ def test_memory_operations_dashboard_contains_request_and_memory_panels():
     assert "Governed adaptive-memory health" in titles
     assert "Consolidation backlog" in titles
     assert "Adaptive-memory use" in titles
+    assert "Memory-quality telemetry" in titles
     serialized = json.dumps(payload)
     assert "SecretRefreshFailureCount" in serialized
     assert "CrossLayerConflictCount" in serialized
     assert "AdaptiveMemoryHitCount" in serialized
+    assert "MemoryQualityDecisionObservedCount" in serialized
+    assert "MemoryQualityOutcomeWriteFailureCount" in serialized
     assert "scope_id" not in serialized

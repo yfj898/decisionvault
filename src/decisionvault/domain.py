@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Mapping
+from typing import Any, Mapping
 
 
 class Strategy(StrEnum):
@@ -97,6 +97,7 @@ class Decision:
     governance_trace: DecisionGovernanceTrace = field(
         default_factory=DecisionGovernanceTrace
     )
+    memory_quality_telemetry: Mapping[str, Any] = field(default_factory=dict)
     model_explanation: str | None = None
     model_provider: str | None = None
 

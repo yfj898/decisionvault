@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 from dataclasses import asdict
+from datetime import datetime, timezone
 import hmac
 import json
 import os
@@ -45,6 +46,10 @@ from decisionvault.memory.cockroach import (
 from decisionvault.memory.connection import psycopg_connection_factory
 from decisionvault.memory.consolidation import CockroachMemoryConsolidationService
 from decisionvault.memory.outbox import ConsolidationOutbox, ConsolidationWorkItem
+from decisionvault.memory_telemetry import (
+    insert_decision_quality_event,
+    insert_outcome_quality_event,
+)
 from decisionvault.memory.embedding import (
     NvidiaSemanticEmbedder,
     deterministic_text_embedding,
@@ -786,6 +791,7 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
     governance_schema_ok = False
     adaptive_memory_schema_ok = False
     adaptive_memory_current_ok = False
+    memory_quality_telemetry_schema_ok = False
     agent_auth_ok = False
     receipt_signing_ok = False
     demo_auth_ok = False
@@ -911,6 +917,24 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
                         """
                     )
                     consolidation_outbox_schema_ok = True
+                    cur.execute(
+                        """
+                        SELECT decision_snapshot_id, source, decided_at, scope_level,
+                               selected_strategy, executable, memory_influenced,
+                               memory_resolution, memory_conflict, quality_features,
+                               telemetry_revision
+                        FROM decision_memory_quality_decisions LIMIT 0
+                        """
+                    )
+                    cur.execute(
+                        """
+                        SELECT decision_snapshot_id, execution_receipt_id, outcome,
+                               effectiveness, confidence, observed_at, recorded_at,
+                               telemetry_revision
+                        FROM decision_memory_quality_outcomes LIMIT 0
+                        """
+                    )
+                    memory_quality_telemetry_schema_ok = True
                     adaptive_memory_schema_ok = True
                     cur.execute(
                         """
@@ -1054,6 +1078,7 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
             governance_schema_ok,
             adaptive_memory_schema_ok,
             adaptive_memory_current_ok,
+            memory_quality_telemetry_schema_ok,
             semantic_embedding_ok,
             semantic_embedding_revision_ok,
             semantic_head_space_ok,
@@ -1078,6 +1103,7 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
             "memory_governance_schema": governance_schema_ok,
             "adaptive_memory_schema": adaptive_memory_schema_ok,
             "adaptive_memory_current": adaptive_memory_current_ok,
+            "memory_quality_telemetry_schema": memory_quality_telemetry_schema_ok,
             "adaptive_memory_governance_revision": ADAPTIVE_MEMORY_GOVERNANCE_REVISION,
             "semantic_embedding": semantic_embedding_ok,
             "semantic_embedding_revision": semantic_embedding_revision_ok,
@@ -1130,7 +1156,7 @@ def _decide(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
             semantic_embedding_space=_current_semantic_embedding_space(),
         )
         signing_key_id, signing_secret, _ = _execution_signing_material()
-        payload["decision_snapshot"] = issue_decision_snapshot(
+        snapshot = issue_decision_snapshot(
             scope_id=scope_id,
             agent_id=agent_id,
             situation=situation,
@@ -1140,6 +1166,28 @@ def _decide(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
             signing_secret=signing_secret,
             signing_key_id=signing_key_id,
         )
+        payload["decision_snapshot"] = snapshot
+        try:
+            insert_decision_quality_event(
+                connection_factory=psycopg_connection_factory(),
+                decision_snapshot_id=str(snapshot["snapshot_id"]),
+                source="AGENT_API",
+                decision=decision,
+                scope_level=_memory_scope_level(scope_id).value,
+                decided_at=datetime.fromisoformat(str(snapshot["issued_at"])),
+            )
+            emit_memory_metric(
+                event_name="memory_quality_decision_observed",
+                quality_decision_observed=1,
+            )
+        except Exception:
+            try:
+                emit_memory_metric(
+                    event_name="memory_quality_decision_write_failure",
+                    quality_decision_write_failure=1,
+                )
+            except Exception:
+                pass
     else:
         payload["decision_snapshot"] = None
     return payload
@@ -1252,6 +1300,39 @@ def _episode_by_receipt(receipt_id: str) -> dict[str, Any] | None:
         if isinstance(provenance, dict):
             result["decision_provenance"] = provenance
     return result
+
+
+def _best_effort_record_quality_outcome(
+    receipt: Any,
+    *,
+    recorded_at: datetime,
+) -> None:
+    snapshot_id = str(receipt.decision_snapshot_id or "").strip()
+    if not snapshot_id:
+        return
+    try:
+        insert_outcome_quality_event(
+            connection_factory=psycopg_connection_factory(),
+            decision_snapshot_id=snapshot_id,
+            execution_receipt_id=receipt.receipt_id,
+            outcome=receipt.outcome,
+            effectiveness=receipt.effectiveness,
+            confidence=receipt.confidence,
+            observed_at=receipt.issued_at,
+            recorded_at=recorded_at,
+        )
+        emit_memory_metric(
+            event_name="memory_quality_outcome_observed",
+            quality_outcome_observed=1,
+        )
+    except Exception:
+        try:
+            emit_memory_metric(
+                event_name="memory_quality_outcome_write_failure",
+                quality_outcome_write_failure=1,
+            )
+        except Exception:
+            pass
 
 
 def _validate_supersession(
@@ -1451,6 +1532,16 @@ def _record(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
         )
     existing = _episode_by_receipt(receipt.receipt_id)
     if existing is not None:
+        recorded_at_raw = existing.get("recorded_at")
+        recorded_at = (
+            datetime.fromisoformat(str(recorded_at_raw))
+            if recorded_at_raw
+            else datetime.now(timezone.utc)
+        )
+        _best_effort_record_quality_outcome(
+            receipt,
+            recorded_at=recorded_at,
+        )
         return existing
     receipt = verify_execution_receipt(
         body.get("execution_receipt"),
@@ -1543,6 +1634,7 @@ def _record(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
         "execution_receipt_id": receipt.receipt_id,
         "idempotent_replay": False,
     }
+    _best_effort_record_quality_outcome(receipt, recorded_at=episode.recorded_at)
     result["consolidation"] = _best_effort_consolidation(scope_id)
     return result
 
