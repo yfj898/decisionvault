@@ -26,14 +26,19 @@ def main() -> int:
             text = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
             continue
-        if relative == ".env.example":
-            text = text.replace(
-                "postgresql://USER:PASSWORD@HOST:26257/defaultdb?sslmode=verify-full",
-                "",
-            )
         for name, pattern in PATTERNS.items():
-            if pattern.search(text):
+            for match in pattern.finditer(text):
+                if (
+                    name == "credentialed_postgres_url"
+                    and match.group(0).startswith("postgresql://USER:PASSWORD@")
+                ):
+                    # Documentation may contain an intentionally non-secret
+                    # placeholder connection string. Keep scanning every file,
+                    # including this scanner itself, but do not treat the
+                    # explicit placeholder tuple as a credential.
+                    continue
                 findings.append((relative, name))
+                break
 
     if findings:
         for relative, name in findings:
