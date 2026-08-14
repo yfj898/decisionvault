@@ -103,4 +103,10 @@ CockroachDB Cloud + NVIDIA semantic governance smoke: PASS
 Governance Cloud temporary rows cleanup: PASS
 Post-governance Phase 8 local regression: 56/56 PASS
 Post-governance Phase 8 Cloud regression: 28/28 PASS
-Protected `/governance-demo` implementation: PASS locally; AWS redeploy pending refreshed AWS CLI login
+Protected `/governance-demo` deployed on AWS Lambda: PASS
+Hosted contradictory memories → `CONFLICT_ABSTAIN`: PASS
+Hosted governance `memory_conflict=True`: PASS
+Unauthorized `/governance-demo`: HTTP 401
+Hosted governance temporary rows cleanup: 0 rows
+Hosted governance desktop Chrome DOM smoke: PASS
+Hosted governance mobile Chrome DOM smoke: PASS

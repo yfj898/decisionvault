@@ -2,7 +2,8 @@
 
 Date: 2026-08-14
 
-Status: PASS for local contract and real CockroachDB Cloud semantic path.
+Status: PASS for local contract, real CockroachDB Cloud semantic path, and the
+hosted AWS Lambda conflict proof.
 
 ## Problem under test
 
@@ -135,11 +136,42 @@ an external authentication / authorization system.
 
 ## Hosted conflict proof
 
-The repository also contains a protected `/governance-demo` endpoint and UI
-control. It seeds two contradictory producer outcomes, asks a third agent to
-decide, expects `CONFLICT_ABSTAIN`, and deletes the temporary scope. At evidence
-freeze time the code and tests are complete; redeployment of this final endpoint
-only requires refreshing the expired short-lived AWS CLI login session.
+The protected `/governance-demo` endpoint and UI control are deployed on the
+same AWS Lambda Function URL as the normal Memory ON/OFF proof. The hosted run
+seeds two contradictory producer outcomes, asks a third agent to decide, and
+then deletes the temporary scope.
+
+Observed hosted result:
+
+```text
+governance_demo_http=200
+governance_strategy=GENERIC_RETRY
+governance_influenced=False
+governance_resolution=CONFLICT_ABSTAIN
+governance_conflict=True
+governance_expected_abstention=True
+governance_cleaned=True
+governance_unauthorized_http=401
+live_conflict_governance=PASS
+live_demo_rows_remaining=0
+live_cleanup_db_check=PASS
+```
+
+The deployed UI was also loaded through real headless Chrome at `1440×1000` and
+`390×844`. Both DOM runs contained the normal memory-proof button, the conflict
+safety button, `CONFLICT_ABSTAIN` explanation, Memory OFF/ON panels, and the
+executed Lambda health status.
+
+```text
+desktop governance DOM smoke=PASS
+mobile governance DOM smoke=PASS
+browser_governance_smoke=PASS
+```
+
+The normal hosted shared-memory proof was re-run after deployment and continued
+to produce `GENERIC_RETRY` with Memory OFF and `REFRESH_PAYMENT_TOKEN` with
+Memory ON, so conflict governance did not erase the original positive memory
+effect.
 
 No database URL, SQL password, NVIDIA key, AWS credential, OAuth token, demo
 token, cluster ID, or private Function URL credential is stored in this file.

@@ -201,6 +201,21 @@ same Memory ON/OFF metrics. Reproduce the Cloud governance path with:
 uv run python scripts/multi_agent_governance_smoke.py --semantic
 ```
 
+The hosted judge UI also exposes a protected **conflict safety proof**. It writes
+two contradictory outcomes from two producer agents into one temporary shared
+scope, asks a third agent to decide, and returns:
+
+```text
+strategy=GENERIC_RETRY
+memory_influenced=false
+memory_resolution=CONFLICT_ABSTAIN
+memory_conflict=true
+```
+
+The temporary scope is deleted after the proof. Missing demo credentials return
+HTTP `401`. The deployed control and result copy were verified with headless
+Chrome at both desktop and mobile viewport sizes.
+
 See `docs/evidence/MULTI_AGENT_MEMORY_GOVERNANCE.md`.
 
 ## Phase 6 — AWS Lambda deployment
