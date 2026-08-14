@@ -335,6 +335,24 @@ def _harmful(outcome: str, effectiveness: float) -> bool:
     return outcome == Outcome.FAILED.value and effectiveness <= 0.3
 
 
+def _memory_exposed(row: Mapping[str, Any]) -> bool:
+    features = row.get("quality_features", {}) or {}
+    if not isinstance(features, Mapping):
+        return False
+    episodic = features.get("episodic", {}) or {}
+    adaptive = features.get("adaptive", {}) or {}
+    try:
+        episodic_candidates = int(
+            episodic.get("candidate_count", 0) if isinstance(episodic, Mapping) else 0
+        )
+        adaptive_candidates = int(
+            adaptive.get("candidate_count", 0) if isinstance(adaptive, Mapping) else 0
+        )
+    except (TypeError, ValueError):
+        return False
+    return episodic_candidates > 0 or adaptive_candidates > 0
+
+
 def calibrate_from_telemetry_rows(
     rows: Iterable[Mapping[str, Any]],
     *,
@@ -342,7 +360,13 @@ def calibrate_from_telemetry_rows(
     minimum_samples: int = 30,
     minimum_success_retention: float = 0.90,
 ) -> TelemetryCalibrationSummary:
-    observed = [row for row in rows if row.get("outcome")]
+    # Pure default-policy requests with no recalled L1/L3 candidates say
+    # nothing about memory thresholds and would otherwise dilute harmful rates
+    # and inflate challenger success retention. Keep only verified outcomes
+    # where the live decision was actually exposed to governed memory evidence.
+    observed = [
+        row for row in rows if row.get("outcome") and _memory_exposed(row)
+    ]
     champion_successes = sum(
         _qualified_success(str(row["outcome"]), float(row["effectiveness"]))
         for row in observed

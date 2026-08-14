@@ -17,7 +17,11 @@ def _row(*, outcome: str, effectiveness: float, shadow: dict) -> dict:
     return {
         "outcome": outcome,
         "effectiveness": effectiveness,
-        "quality_features": {"shadows": [shadow]},
+        "quality_features": {
+            "episodic": {"candidate_count": 1},
+            "adaptive": {"candidate_count": 0},
+            "shadows": [shadow],
+        },
     }
 
 
@@ -48,6 +52,22 @@ def test_real_telemetry_requires_a_minimum_sample_floor():
     )
     assert result.recommendation == "INSUFFICIENT_REAL_TELEMETRY"
     assert result.recommended_profile is None
+
+
+def test_no_memory_default_requests_do_not_count_as_threshold_evidence():
+    row = _row(
+        outcome="SUCCESS",
+        effectiveness=0.95,
+        shadow={
+            "profile": {"name": "adaptive_effective_confidence_0_35"},
+            "same_strategy_as_champion": True,
+            "executable": True,
+        },
+    )
+    row["quality_features"]["episodic"]["candidate_count"] = 0
+    result = calibrate_from_telemetry_rows([row], minimum_samples=1)
+    assert result.observed_samples == 0
+    assert result.recommendation == "INSUFFICIENT_REAL_TELEMETRY"
 
 
 def test_counterfactual_different_executable_strategy_is_never_auto_recommended():
