@@ -207,14 +207,31 @@ def _race(
 def main() -> int:
     api_key = os.getenv("NVIDIA_API_KEY", "").strip()
     revision = os.getenv("NVIDIA_EMBED_REVISION", "").strip()
-    if not os.getenv("DATABASE_URL"):
+    runtime_database_url = os.getenv("DATABASE_URL", "").strip()
+    cleanup_database_url = os.getenv(
+        "DECISIONVAULT_CLEANUP_DATABASE_URL", runtime_database_url
+    ).strip()
+    if not runtime_database_url:
         raise SystemExit("DATABASE_URL is required")
+    if not cleanup_database_url:
+        raise SystemExit("DECISIONVAULT_CLEANUP_DATABASE_URL is required")
     if not api_key:
         raise SystemExit("NVIDIA_API_KEY is required")
     if not revision:
         raise SystemExit("NVIDIA_EMBED_REVISION is required")
 
-    connection_factory = psycopg_connection_factory(statement_timeout_ms=20000)
+    connection_factory = psycopg_connection_factory(
+        runtime_database_url,
+        statement_timeout_ms=20000,
+    )
+    # Production business operations deliberately use the least-privilege
+    # runtime identity. Test cleanup may require DELETE on append-only audit
+    # tables that the runtime identity must never receive, so cleanup can use a
+    # separate migration-admin URL without widening production privileges.
+    cleanup_connection_factory = psycopg_connection_factory(
+        cleanup_database_url,
+        statement_timeout_ms=20000,
+    )
     semantic = NvidiaSemanticEmbedder(
         api_key=api_key,
         revision=revision,
@@ -238,7 +255,7 @@ def main() -> int:
     checks: dict[str, bool] = {}
     exit_code = 2
     cleanup_ok = False
-    _delete_prefix(connection_factory, prefix)
+    _delete_prefix(cleanup_connection_factory, prefix)
     try:
         positive_scope = f"{prefix}-positive"
         _seed_pair(store, positive_scope)
@@ -485,8 +502,8 @@ def main() -> int:
         print(f"adaptive_cloud_checks={passed_count}/{len(checks)}")
         exit_code = 0 if passed_count == len(checks) else 2
     finally:
-        _delete_prefix(connection_factory, prefix)
-        remaining = _remaining_rows(connection_factory, prefix)
+        _delete_prefix(cleanup_connection_factory, prefix)
+        remaining = _remaining_rows(cleanup_connection_factory, prefix)
         cleanup_ok = all(value == 0 for value in remaining.values())
         print("adaptive_cloud_cleanup=" + ("PASS" if cleanup_ok else "FAIL"))
         print("adaptive_cloud_temporary_rows=" + str(sum(remaining.values())))

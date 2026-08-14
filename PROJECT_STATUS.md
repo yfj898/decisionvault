@@ -15,7 +15,7 @@ Baseline:
 8 tests PASS
 
 Current local verification:
-176 tests PASS
+178 tests PASS
 Post-adaptive Phase 8 local benchmark: 56/56 PASS
 Governed Adaptive Memory v6 local implementation: PASS
 L0 request-local Working Memory: PASS
@@ -39,10 +39,24 @@ Adaptive DVI fast-path + exact support/current-head coverage SQL: PASS
 Managed MCP adaptive auditor imports the same production SQL builders: PASS
 Adaptive readiness schema/revision/current-support checks fail closed: PASS
 Governed Adaptive Memory v6 migration parse: 15 statements / 4 runtime DML grants / 1 DVI PASS
-Real CockroachDB Governed Adaptive Memory v6 migration: NOT RUN in current MCP shell (migration credential / CA not available)
-Real adaptive-memory CockroachDB + NVIDIA adversarial/concurrency smoke: NOT RUN in current MCP shell (`DATABASE_URL` not available)
-Hosted v6 Lambda deployment/readiness/demo regression: NOT RUN in current MCP shell (AWS runtime credentials/CLI not available)
-Existing hosted v5 production evidence below remains historical PASS and was not re-labelled as a v6 live verification.
+Real CockroachDB Governed Adaptive Memory v6 migration: PASS
+Real v6 tables / runtime table-level DML grants / adaptive DVI visibility: PASS
+Real adaptive-memory CockroachDB + NVIDIA adversarial/concurrency smoke: 13/13 PASS
+Real consolidation-vs-normal-write / supersession / revocation concurrency: PASS
+Real adaptive smoke cleanup: 0 temporary rows
+Real adaptive L3 EXPLAIN: `vector search` + `decision_governed_memories_scope_space_semantic_vec_idx` PASS
+Real adaptive exact coverage includes support + current-head lineage: PASS
+Managed MCP OAuth re-authorized with read-only data permission: PASS
+Managed MCP L1 + L3 provenance / DVI / exact-coverage auditor: PASS / cleanup 0
+Managed MCP 16,384-character EXPLAIN request bound: fixed with plan-only compact vector literal; production SQL builders unchanged
+AWS restricted deployer STS identity recovery: PASS (`decisionvault-deployer`)
+Lambda v6 deployment: Active / Successful
+Hosted v6 `/health/ready`: HTTP 200 / adaptive schema=True / adaptive current=True
+Hosted v6 `/demo`: HTTP 200 / expected memory change=True / cross-agent memory=True / cleaned
+Hosted v6 `/governance-demo`: HTTP 200 / `CONFLICT_ABSTAIN` / executable=false / cleaned
+Hosted demo least-privilege cleanup regression: fixed without granting runtime DELETE on append-only revocation audit
+Post-v6 production semantic benchmark: 14/14 PASS (`decisionvault-prod-r1`)
+Post-v6 production memory rows: episodes=0 / heads=0 / revocations=0 / candidates=0 / strategy-stats=0 / governed-memories=0 / support=0
 Production hardening v5: PASS (fixed NVIDIA/MCP bearer destinations / reproducible Lambda CA+dependency build / explicit embedding revision / observed-vs-recorded audit time / signed decision snapshot TOCTOU binding / decider-executor role separation)
 NVIDIA credential-bearing origin allowlist + redirect rejection: PASS
 Embedding generation `decisionvault-prod-r1` included in semantic space: PASS

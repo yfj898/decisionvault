@@ -476,10 +476,6 @@ def _delete_scope(scope_id: str) -> None:
                 (scope_id,),
             )
             cur.execute(
-                "DELETE FROM decision_memory_revocations WHERE scope_id = %s",
-                (scope_id,),
-            )
-            cur.execute(
                 "DELETE FROM decision_memory_heads WHERE scope_id = %s",
                 (scope_id,),
             )

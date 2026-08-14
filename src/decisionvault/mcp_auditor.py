@@ -22,7 +22,18 @@ MANAGED_MCP_ENDPOINT = "https://cockroachlabs.cloud/mcp"
 
 
 def _vector_literal(values: list[float]) -> str:
-    return "[" + ",".join(f"{float(value):.8f}" for value in values) + "]"
+    # Managed MCP rejects tool queries longer than 16,384 characters. A native
+    # 1024D embedding can exceed that limit because the production ANN/coverage
+    # SQL references the same vector expression more than once. MCP uses this
+    # literal only for EXPLAIN, never for retrieval or a DecisionVault decision,
+    # so preserve dimensionality/non-zero direction while quantizing each
+    # component to its sign. This keeps the *production SQL builders and index
+    # predicates* identical while making the plan-only request size bounded.
+    compact = []
+    for value in values:
+        numeric = float(value)
+        compact.append("1" if numeric > 0 else "-1" if numeric < 0 else "0")
+    return "[" + ",".join(compact) + "]"
 
 
 def _sql_literal(value: str) -> str:

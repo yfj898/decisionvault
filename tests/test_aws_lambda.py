@@ -927,6 +927,52 @@ def test_security_reconciliation_retires_absent_producers(monkeypatch):
     assert "recovery-observer" in active
 
 
+def test_demo_scope_cleanup_does_not_require_revocation_delete_privilege(monkeypatch):
+    class Cursor:
+        def __init__(self):
+            self.sql = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, sql, _params=None):
+            self.sql.append(sql)
+
+    class Connection:
+        def __init__(self):
+            self.cursor_value = Cursor()
+            self.committed = False
+
+        def cursor(self):
+            return self.cursor_value
+
+        def commit(self):
+            self.committed = True
+
+        def close(self):
+            pass
+
+    conn = Connection()
+    monkeypatch.setattr(
+        aws_lambda,
+        "psycopg_connection_factory",
+        lambda: (lambda: conn),
+    )
+
+    aws_lambda._delete_scope("phase7-demo-test")
+
+    statements = "\n".join(conn.cursor_value.sql)
+    assert "decision_governed_memory_support" in statements
+    assert "decision_governed_memories" in statements
+    assert "decision_memory_heads" in statements
+    assert "decision_episodes" in statements
+    assert "DELETE FROM decision_memory_revocations" not in statements
+    assert conn.committed is True
+
+
 def test_consolidation_failure_defers_without_creating_ungoverned_memory(monkeypatch):
     monkeypatch.setattr(
         aws_lambda,

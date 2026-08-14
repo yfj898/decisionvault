@@ -104,11 +104,19 @@ python scripts/apply_governed_adaptive_memory_v6.py \
 
 After the migration, the real adaptive-memory adversarial/concurrency smoke uses
 the normal runtime `DATABASE_URL`, NVIDIA embedding configuration, and always
-cleans its temporary scopes in `finally`:
+cleans its temporary scopes in `finally`. When the runtime correctly lacks
+DELETE on append-only revocation audit, provide
+`DECISIONVAULT_CLEANUP_DATABASE_URL` as a migration-admin connection **only for
+test cleanup** rather than widening runtime privileges:
 
 ```bash
 python scripts/adaptive_memory_cloud_smoke.py
 ```
+
+The production v6 migration, 13/13 live adversarial/concurrency smoke, adaptive
+DVI, read-only Managed MCP auditor, Lambda hosted regression, 14/14 semantic
+benchmark, and final zero-row cleanup are recorded in
+`docs/evidence/GOVERNED_ADAPTIVE_MEMORY_V6.md`.
 
 Verified competition integrations:
 

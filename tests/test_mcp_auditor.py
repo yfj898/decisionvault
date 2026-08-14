@@ -2,15 +2,42 @@ from __future__ import annotations
 
 import pytest
 
+from decisionvault.adaptive_memory import ADAPTIVE_MEMORY_GOVERNANCE_REVISION
 from decisionvault.mcp_auditor import (
     ManagedMcpClient,
     MemoryAuditorAgent,
     _decode_mcp_body,
+    _vector_literal,
+)
+from decisionvault.memory.governed_query import (
+    adaptive_semantic_coverage_sql,
+    semantic_coverage_sql,
 )
 
 
 def test_empty_notification_response_is_valid():
     assert _decode_mcp_body(b"", "application/json") == {}
+
+
+def test_mcp_1024d_plan_queries_stay_below_managed_query_limit():
+    vector = [(-1.0 if index % 2 else 1.0) * 0.123456789 for index in range(1024)]
+    literal = _vector_literal(vector)
+    vector_expr = f"'{literal}'::VECTOR"
+    episode_coverage = semantic_coverage_sql(
+        vector_expr=vector_expr,
+        scope_expr="'scope'",
+        space_expr="'space'",
+        max_distance_expr="0.6",
+    )
+    adaptive_coverage = adaptive_semantic_coverage_sql(
+        vector_expr=vector_expr,
+        scope_expr="'scope'",
+        space_expr="'space'",
+        governance_revision_expr=f"'{ADAPTIVE_MEMORY_GOVERNANCE_REVISION}'",
+        max_distance_expr="0.6",
+    )
+    assert len(episode_coverage) < 16_384
+    assert len(adaptive_coverage) < 16_384
 
 
 def test_managed_mcp_bearer_endpoint_is_fixed():
