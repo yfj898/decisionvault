@@ -15,7 +15,22 @@ Baseline:
 8 tests PASS
 
 Current local verification:
-206 tests PASS
+217 tests PASS
+Real memory-quality telemetry calibration v1: PRODUCTION PIPELINE PASS / threshold change correctly withheld at N=1 memory-exposed verified outcome
+CockroachDB v8 telemetry: append-only decision + verified-outcome tables / runtime SELECT+INSERT only / no UPDATE+DELETE
+Telemetry privacy boundary: no raw situation/scope/agent/episode/memory identifiers inside quality_features; aggregate report privacy scan PASS
+Champion/challenger shadow evaluation: 9 monotone-stricter profiles / executable alternate strategy => COUNTERFACTUAL_UNOBSERVED
+Real calibration gate: minimum 30 memory-exposed outcomes / success retention >=95% / factual harmful rate <=5% / no automatic threshold mutation
+First real hosted telemetry loop: 2 decisions + 2 verified outcomes / 1 memory-exposed labeled sample / GOVERNED_MEMORY REFRESH_PAYMENT_TOKEN -> SUCCESS 0.95
+Real telemetry calibration report: INSUFFICIENT_REAL_TELEMETRY / recommended_profile=NONE / production champion unchanged
+Telemetry Lambda readiness: HTTP 200 / memory_quality_telemetry_schema=True / errors=0 / deployed CodeSha256 matched source
+Live semantic benchmark security-reconciliation race found and fixed without disabling reconciliation
+Post-fix semantic benchmark under concurrent security reconciliation: 14/14 PASS
+Post-telemetry adaptive CockroachDB+NVIDIA adversarial/concurrency smoke: 13/13 PASS / cleanup 0
+Post-telemetry hosted demo/governance: HTTP 200 / memory change + cross-agent PASS / ABSTAIN CONFLICT_ABSTAIN PASS / cleaned
+Final business memory/outbox rows: 0; retained anonymous quality telemetry: 2 decisions / 2 outcomes
+Telemetry write-failure alarm + dashboard definitions: PASS; live CloudWatch reprovision pending fresh AWS governance login (restricted deployer intentionally not widened)
+GitHub Actions run `31806122547` (`f63af3a`): SUCCESS for final telemetry + benchmark isolation source
 Performance / cost / memory-quality calibration v1: LOCAL + REAL DATA PATH PASS
 Bundled L1+L3 semantic recall: 1 NVIDIA query embedding + 1 CockroachDB connection / decision while preserving 4 ANN+exact SQL queries
 Real 5× runtime benchmark: provider requests 2→1 (-50%) / DB connections 2→1 (-50%) / median recall 3161ms→1751ms (-44.6%)

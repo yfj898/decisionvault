@@ -141,6 +141,21 @@ remain auditable without retaining execution influence until hard expiry.
 Evidence and calibration reports are in
 `docs/evidence/PERFORMANCE_COST_MEMORY_QUALITY_V1.md` and `reports/`.
 
+DecisionVault now also records a privacy-bounded, append-only memory-quality
+telemetry loop from signed decision snapshots to verified execution outcomes.
+Each production decision evaluates nine **monotone-stricter** threshold shadows,
+but the shadows are non-authoritative and never enter the signed execution
+artifact. Historical telemetry cannot safely identify looser thresholds, and a
+shadow that would choose a different executable strategy is explicitly treated
+as an unobserved counterfactual rather than being scored with the champion's
+outcome. Automatic recommendation is gated on at least 30 memory-exposed
+verified outcomes, >=95% successful-outcome retention, <=5% factual harmful
+rate, and zero executable counterfactuals; the report cannot mutate runtime
+thresholds. The first real production sample is intentionally reported as
+`INSUFFICIENT_REAL_TELEMETRY`, so the current champion stays unchanged. Evidence
+is in `docs/evidence/MEMORY_QUALITY_TELEMETRY_V1.md` and
+`reports/memory-telemetry-calibration.json`.
+
 Verified competition integrations:
 
 - CockroachDB Distributed Vector Indexing
