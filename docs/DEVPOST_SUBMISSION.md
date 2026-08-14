@@ -211,6 +211,8 @@ reproducibly.
 - Candidate-crowding-resistant governed memory heads.
 - Server-signed execution receipts and receipt-id idempotency for hosted outcome
   recording.
+- Typed, single-successor correction metadata that only lets an authenticated
+  producer supersede its own current governed memory head.
 - Real AWS Lambda judge-facing application.
 - One-click Memory OFF vs Memory ON causal proof.
 - Systematic benchmark showing benefit, false-influence, isolation, and model-

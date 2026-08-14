@@ -15,7 +15,7 @@ Baseline:
 8 tests PASS
 
 Current local verification:
-58 tests PASS
+63 tests PASS
 CockroachDB Cloud persistence smoke: PASS
 Fresh-process recall changed agent behavior: PASS
 Memory-off causal baseline: PASS
@@ -130,3 +130,9 @@ Hosted receipt replay returns same episode: PASS
 Hosted tampered receipt rejection: HTTP 400
 Hosted verified failure still changes planner strategy: PASS
 Verified receipt temporary rows cleanup: 0 rows
+Typed `supersedes_episode_id UUID` migration: PASS
+Partial unique supersession index: PASS
+Same-producer current-head validation: PASS
+Non-current supersession target rejected: HTTP 409
+Hosted typed supersession history/head proof: PASS
+Typed supersession temporary rows cleanup: 0 rows

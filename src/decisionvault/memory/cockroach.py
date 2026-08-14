@@ -42,6 +42,9 @@ class CockroachVectorMemoryStore:
         execution_receipt_id = str(
             episode.evidence.get("execution_receipt_id", "")
         ).strip() or None
+        supersedes_episode_id = str(
+            episode.evidence.get("supersedes_episode_id", "")
+        ).strip() or None
         semantic_vector = (
             _vector_literal(self.semantic_embedder(episode.situation))
             if self.semantic_embedder is not None
@@ -52,11 +55,11 @@ class CockroachVectorMemoryStore:
                 INSERT INTO decision_episodes (
                     episode_id, scope_id, situation, strategy, outcome,
                     effectiveness, confidence, evidence, execution_receipt_id,
-                    embedding, created_at
+                    supersedes_episode_id, embedding, created_at
                 )
                 VALUES (
                     %s::UUID, %s, %s, %s, %s,
-                    %s, %s, %s::JSONB, %s, %s::VECTOR, %s
+                    %s, %s, %s::JSONB, %s, %s::UUID, %s::VECTOR, %s
                 )
             """
             params = (
@@ -69,6 +72,7 @@ class CockroachVectorMemoryStore:
                 episode.confidence,
                 json.dumps(dict(episode.evidence)),
                 execution_receipt_id,
+                supersedes_episode_id,
                 vector,
                 episode.created_at,
             )
@@ -76,12 +80,13 @@ class CockroachVectorMemoryStore:
             sql = """
                 INSERT INTO decision_episodes (
                     episode_id, scope_id, situation, strategy, outcome,
-                    effectiveness, confidence, evidence, execution_receipt_id, embedding,
+                    effectiveness, confidence, evidence, execution_receipt_id,
+                    supersedes_episode_id, embedding,
                     semantic_embedding, created_at
                 )
                 VALUES (
                     %s::UUID, %s, %s, %s, %s,
-                    %s, %s, %s::JSONB, %s, %s::VECTOR,
+                    %s, %s, %s::JSONB, %s, %s::UUID, %s::VECTOR,
                     %s::VECTOR, %s
                 )
             """
@@ -95,6 +100,7 @@ class CockroachVectorMemoryStore:
                 episode.confidence,
                 json.dumps(dict(episode.evidence)),
                 execution_receipt_id,
+                supersedes_episode_id,
                 vector,
                 semantic_vector,
                 episode.created_at,
@@ -107,9 +113,6 @@ class CockroachVectorMemoryStore:
                     episode.evidence.get("producer_agent_id", "")
                 ).strip()
                 if semantic_vector is not None and producer_agent_id:
-                    supersedes_episode_id = str(
-                        episode.evidence.get("supersedes_episode_id", "")
-                    ).strip()
                     if supersedes_episode_id:
                         cur.execute(
                             """
@@ -123,11 +126,12 @@ class CockroachVectorMemoryStore:
                         UPSERT INTO decision_memory_heads (
                             scope_id, producer_agent_id, strategy, episode_id,
                             situation, outcome, effectiveness, confidence,
-                            evidence, execution_receipt_id, semantic_embedding, created_at
+                            evidence, execution_receipt_id, supersedes_episode_id,
+                            semantic_embedding, created_at
                         ) VALUES (
                             %s, %s, %s, %s::UUID,
                             %s, %s, %s, %s,
-                            %s::JSONB, %s, %s::VECTOR, %s
+                            %s::JSONB, %s, %s::UUID, %s::VECTOR, %s
                         )
                         """,
                         (
@@ -141,6 +145,7 @@ class CockroachVectorMemoryStore:
                             episode.confidence,
                             json.dumps(dict(episode.evidence)),
                             execution_receipt_id,
+                            supersedes_episode_id,
                             semantic_vector,
                             episode.created_at,
                         ),

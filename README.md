@@ -198,8 +198,9 @@ governance rules:
   token may access;
 - **staleness** — memories older than the configured age window do not propagate;
 - **supersession** — a corrective episode can retire an obsolete governed head
-  through `supersedes_episode_id` while immutable history remains in
-  `decision_episodes`;
+  through typed `supersedes_episode_id UUID` while immutable history remains in
+  `decision_episodes`; the target must belong to the same authenticated producer,
+  remain the current governed head, and may have only one direct successor;
 - **candidate-crowding resistance** — production recall reads
   `decision_memory_heads`, whose primary key keeps one current head per producer
   and strategy, so repeated writes cannot fill the ANN top-K before governance;
@@ -413,6 +414,7 @@ repository. See `docs/evidence/PHASE4_MANAGED_MCP.md`.
 - [x] Per-agent token → identity / scope / permission binding for `/record` and `/decide`
 - [x] Server-signed `/execute` receipts required by the general `/record` API
 - [x] Unique execution receipt idempotency boundary
+- [x] Typed/race-safe same-producer supersession boundary
 - [x] Conflict-aware multi-agent memory governance
 - [x] Staleness / supersession / candidate-crowding controls
 - [x] Server-side producer trust weighting with conflict visibility

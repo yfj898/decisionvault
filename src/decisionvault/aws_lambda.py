@@ -4,7 +4,7 @@ import base64
 import json
 import os
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from decisionvault.agent.engine import DecisionAgent
 from decisionvault.agent.auth import AgentGrant, authenticate_agent, load_agent_grants
@@ -50,6 +50,10 @@ SECURITY_HEADERS = {
         "img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'"
     ),
 }
+
+
+class SupersessionConflict(Exception):
+    """The requested correction targets a non-current or concurrently replaced head."""
 
 
 def _json_response(status_code: int, payload: dict[str, Any]) -> dict[str, Any]:
@@ -297,6 +301,51 @@ def _episode_by_receipt(receipt_id: str) -> dict[str, Any] | None:
     }
 
 
+def _validate_supersession(
+    *,
+    scope_id: str,
+    agent_id: str,
+    supersedes_episode_id: str,
+) -> str:
+    try:
+        target_id = str(UUID(supersedes_episode_id))
+    except (ValueError, AttributeError) as exc:
+        raise ValueError("supersedes_episode_id must be a valid UUID") from exc
+
+    conn = psycopg_connection_factory()()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    e.evidence->>'producer_agent_id' AS producer_agent_id,
+                    EXISTS (
+                        SELECT 1
+                        FROM decision_memory_heads h
+                        WHERE h.scope_id = e.scope_id
+                          AND h.episode_id = e.episode_id
+                    ) AS is_current_head
+                FROM decision_episodes e
+                WHERE e.episode_id = %s::UUID AND e.scope_id = %s
+                """,
+                (target_id, scope_id),
+            )
+            row = cur.fetchone()
+    finally:
+        conn.close()
+
+    if row is None:
+        raise ValueError("supersession target does not exist in the requested scope")
+    producer_agent_id = str(row[0] or "")
+    if producer_agent_id != agent_id:
+        raise ValueError("an agent may supersede only its own outcome memory")
+    if not bool(row[1]):
+        raise SupersessionConflict(
+            "supersession target is not the current governed head"
+        )
+    return target_id
+
+
 def _decision_payload(decision: Decision) -> dict[str, Any]:
     return {
         "strategy": decision.strategy.value,
@@ -446,7 +495,11 @@ def _record(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
     }
     supersedes_episode_id = str(body.get("supersedes_episode_id", "")).strip()
     if supersedes_episode_id:
-        evidence["supersedes_episode_id"] = supersedes_episode_id
+        evidence["supersedes_episode_id"] = _validate_supersession(
+            scope_id=scope_id,
+            agent_id=agent_id,
+            supersedes_episode_id=supersedes_episode_id,
+        )
     decision = Decision(
         strategy=receipt.strategy,
         reason=f"verified execution receipt {receipt.receipt_id}",
@@ -461,12 +514,16 @@ def _record(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
             confidence=receipt.confidence,
             evidence=evidence,
         )
-    except Exception:
+    except Exception as exc:
         # The unique execution_receipt_id index is the final race-safe idempotency
         # boundary. If a concurrent writer won, return the already-recorded row.
         existing = _episode_by_receipt(receipt.receipt_id)
         if existing is not None:
             return existing
+        if supersedes_episode_id and type(exc).__name__ == "UniqueViolation":
+            raise SupersessionConflict(
+                "supersession target already has a competing successor"
+            ) from exc
         raise
     return {
         "episode_id": episode.episode_id,
@@ -545,6 +602,8 @@ def lambda_handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
                 return _json_response(401, {"error": "unauthorized"})
             return _json_response(200, _governance_demo())
         return _json_response(404, {"error": "not_found"})
+    except SupersessionConflict as exc:
+        return _json_response(409, {"error": "conflict", "detail": str(exc)})
     except (ValueError, TypeError, json.JSONDecodeError) as exc:
         return _json_response(400, {"error": "bad_request", "detail": str(exc)})
     except Exception as exc:
