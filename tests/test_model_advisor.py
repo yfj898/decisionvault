@@ -24,11 +24,13 @@ class CapturingAdvisor:
 
     def __init__(self):
         self.recalled_ids = ()
+        self.governance_trace = None
 
     def explain(self, **kwargs) -> str:
         self.recalled_ids = tuple(
             item.episode.episode_id for item in kwargs["recalled"]
         )
+        self.governance_trace = kwargs["decision"].governance_trace
         return "The explanation only sees evidence admitted by memory governance."
 
 
@@ -119,6 +121,7 @@ def test_advisor_only_receives_governed_memory_evidence():
     assert decision.memory_influenced is False
     assert decision.recalled_episode_ids == ()
     assert advisor.recalled_ids == ()
+    assert advisor.governance_trace == decision.governance_trace
 
 
 def test_advisor_is_not_invoked_for_conflict_abstention():

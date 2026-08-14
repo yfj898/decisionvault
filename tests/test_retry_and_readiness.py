@@ -81,6 +81,10 @@ class ReadyCursor:
     def fetchone(self):
         if "WHERE semantic_embedding_space IS DISTINCT FROM" in self.last_sql:
             return (0,)
+        if "FROM decision_governed_memories" in self.last_sql and "count(*)" in self.last_sql:
+            return (0,)
+        if "FROM decision_strategy_effectiveness" in self.last_sql and "count(*)" in self.last_sql:
+            return (0,)
         return (1,)
 
 
@@ -152,6 +156,8 @@ def test_readiness_checks_secret_database_and_embedding(monkeypatch):
     assert payload["semantic_embedding"] is True
     assert payload["semantic_embedding_revision"] is True
     assert payload["semantic_head_space_current"] is True
+    assert payload["adaptive_memory_schema"] is True
+    assert payload["adaptive_memory_current"] is True
     assert payload["nvidia_provider_origin"] is True
     assert payload["advisor_required_for_readiness"] is False
 

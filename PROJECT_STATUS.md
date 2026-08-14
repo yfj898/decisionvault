@@ -15,7 +15,34 @@ Baseline:
 8 tests PASS
 
 Current local verification:
-138 tests PASS
+176 tests PASS
+Post-adaptive Phase 8 local benchmark: 56/56 PASS
+Governed Adaptive Memory v6 local implementation: PASS
+L0 request-local Working Memory: PASS
+L1 governed DecisionEpisode/current-head evidence remains authoritative: PASS
+L2 strategy × situation-class effectiveness projection: PASS
+L3 governed procedural + avoidance memory: PASS
+Deterministic candidate → independent governance → promote/abstain contract: PASS
+Distinct-producer promotion thresholds / producer-crowding resistance: PASS
+Explicit applicability preconditions + exclusions before adaptive reuse: PASS
+Negative-memory veto before positive-memory ranking: PASS
+Independent contradiction invalidates prior active L3 rule: PASS
+Memory-class-specific expiry + confidence decay: PASS
+Legacy episodes without explicit applicability cannot auto-generalize: PASS
+Cross-scope / cross-embedding-revision consolidation isolation: PASS
+Late/stale evidence cannot reactivate or supersede newer governed knowledge: PASS
+Consolidation-vs-normal-write / supersession / revocation revalidation suite: PASS
+Decision governance trace → signed snapshot → signed receipt → outcome provenance: PASS
+L2 semantic statistics cannot directly select execution strategy: PASS
+Advisor receives committed governance trace only and remains non-authoritative: PASS
+Adaptive DVI fast-path + exact support/current-head coverage SQL: PASS
+Managed MCP adaptive auditor imports the same production SQL builders: PASS
+Adaptive readiness schema/revision/current-support checks fail closed: PASS
+Governed Adaptive Memory v6 migration parse: 15 statements / 4 runtime DML grants / 1 DVI PASS
+Real CockroachDB Governed Adaptive Memory v6 migration: NOT RUN in current MCP shell (migration credential / CA not available)
+Real adaptive-memory CockroachDB + NVIDIA adversarial/concurrency smoke: NOT RUN in current MCP shell (`DATABASE_URL` not available)
+Hosted v6 Lambda deployment/readiness/demo regression: NOT RUN in current MCP shell (AWS runtime credentials/CLI not available)
+Existing hosted v5 production evidence below remains historical PASS and was not re-labelled as a v6 live verification.
 Production hardening v5: PASS (fixed NVIDIA/MCP bearer destinations / reproducible Lambda CA+dependency build / explicit embedding revision / observed-vs-recorded audit time / signed decision snapshot TOCTOU binding / decider-executor role separation)
 NVIDIA credential-bearing origin allowlist + redirect rejection: PASS
 Embedding generation `decisionvault-prod-r1` included in semantic space: PASS

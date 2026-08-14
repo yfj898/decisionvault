@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from dataclasses import asdict
 import hmac
 import json
 import os
@@ -8,6 +9,11 @@ import time
 from typing import Any
 from uuid import UUID, uuid4
 
+from decisionvault.adaptive_memory import (
+    ADAPTIVE_MEMORY_GOVERNANCE_REVISION,
+    MemoryScopeLevel,
+    derive_context_tags,
+)
 from decisionvault.agent.engine import DecisionAgent
 from decisionvault.agent.auth import AgentGrant, authenticate_agent, load_agent_grants
 from decisionvault.agent.memory_governance import (
@@ -19,6 +25,7 @@ from decisionvault.domain import Decision, DecisionAction, Outcome, Strategy
 from decisionvault.execution import (
     DecisionSnapshotStale,
     configured_sandbox_scenario,
+    decision_provenance_payload,
     decision_state_digest,
     issue_decision_snapshot,
     issue_sandbox_receipt,
@@ -31,6 +38,7 @@ from decisionvault.memory.cockroach import (
     SupersessionWriteConflict,
 )
 from decisionvault.memory.connection import psycopg_connection_factory
+from decisionvault.memory.consolidation import CockroachMemoryConsolidationService
 from decisionvault.memory.embedding import (
     NvidiaSemanticEmbedder,
     deterministic_text_embedding,
@@ -56,6 +64,20 @@ GOVERNANCE_CONFLICT_CASE = (
     "replacement card payment still fails and the authorization credential "
     "may need a refresh"
 )
+SCENARIO_APPLICABILITY: dict[str, tuple[frozenset[str], frozenset[str]]] = {
+    "stale_payment_token": (
+        frozenset({"card_replaced", "stale_token"}),
+        frozenset({"insufficient_funds", "account_blocked"}),
+    ),
+    "billing_profile_mismatch": (
+        frozenset({"billing_profile_mismatch"}),
+        frozenset({"account_blocked"}),
+    ),
+    "transient_issuer_outage": (
+        frozenset({"transient_issuer_outage"}),
+        frozenset({"account_blocked"}),
+    ),
+}
 SECURITY_HEADERS = {
     "x-content-type-options": "nosniff",
     "referrer-policy": "no-referrer",
@@ -297,10 +319,12 @@ def _refresh_runtime_security_state(*, force: bool = False) -> None:
     active = {grant.agent_id for grant in grants.values()} | set(
         INTERNAL_PRODUCER_AGENT_IDS
     )
-    _build_memory_store().retire_untrusted_heads(
+    retirement = _build_memory_store().retire_untrusted_heads(
         active_producer_agent_ids=active,
         reason="producer authorization retired by runtime grant reconciliation",
     )
+    for scope_id in retirement.scope_ids:
+        _best_effort_consolidation(scope_id)
     _SECURITY_RECONCILE_AT = now
 
 
@@ -340,6 +364,58 @@ def _build_memory_store() -> CockroachVectorMemoryStore:
     return store
 
 
+def _build_consolidation_service() -> CockroachMemoryConsolidationService:
+    store = _build_memory_store()
+    if store.semantic_embedder is None or not (store.semantic_embedding_space or "").strip():
+        raise RuntimeError("semantic embedding is required for adaptive consolidation")
+    return CockroachMemoryConsolidationService(
+        connection_factory=store.connection_factory,
+        semantic_embedder=store.semantic_embedder,
+        semantic_embedding_space=str(store.semantic_embedding_space),
+    )
+
+
+def _consolidate_scope(scope_id: str) -> dict[str, Any]:
+    active_producers = set(_producer_trust_registry())
+    result = _build_consolidation_service().consolidate_scope(
+        scope_id=scope_id,
+        scope_level=MemoryScopeLevel.TEAM,
+        active_producer_agent_ids=active_producers,
+    )
+    return {
+        "status": "COMPLETE",
+        "candidate_count": result.candidate_count,
+        "promoted_count": result.promoted_count,
+        "abstained_count": result.abstained_count,
+        "memory_ids": list(result.memory_ids),
+        "resolutions": list(result.resolutions),
+        "governance_revision": ADAPTIVE_MEMORY_GOVERNANCE_REVISION,
+    }
+
+
+def _best_effort_consolidation(scope_id: str) -> dict[str, Any]:
+    """Consolidate without making committed L1/revocation writes non-idempotent.
+
+    Promotion is optional authority: failure means *less* reusable memory, never
+    an ungoverned fallback. Readiness still fails closed when the adaptive
+    schema/provider is unhealthy; this wrapper only preserves durable outcome
+    and revocation semantics after those writes have already committed.
+    """
+
+    try:
+        return _consolidate_scope(scope_id)
+    except Exception as exc:
+        return {
+            "status": "DEFERRED",
+            "candidate_count": 0,
+            "promoted_count": 0,
+            "abstained_count": 0,
+            "memory_ids": [],
+            "resolutions": [f"CONSOLIDATION_DEFERRED:{type(exc).__name__}"],
+            "governance_revision": ADAPTIVE_MEMORY_GOVERNANCE_REVISION,
+        }
+
+
 def _build_agent(
     *,
     memory_enabled: bool,
@@ -377,6 +453,32 @@ def _delete_scope(scope_id: str) -> None:
     conn = psycopg_connection_factory()()
     try:
         with conn.cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM decision_governed_memory_support
+                WHERE memory_id IN (
+                    SELECT memory_id FROM decision_governed_memories
+                    WHERE scope_id = %s
+                )
+                """,
+                (scope_id,),
+            )
+            cur.execute(
+                "DELETE FROM decision_governed_memories WHERE scope_id = %s",
+                (scope_id,),
+            )
+            cur.execute(
+                "DELETE FROM decision_memory_consolidation_candidates WHERE scope_id = %s",
+                (scope_id,),
+            )
+            cur.execute(
+                "DELETE FROM decision_strategy_effectiveness WHERE scope_id = %s",
+                (scope_id,),
+            )
+            cur.execute(
+                "DELETE FROM decision_memory_revocations WHERE scope_id = %s",
+                (scope_id,),
+            )
             cur.execute(
                 "DELETE FROM decision_memory_heads WHERE scope_id = %s",
                 (scope_id,),
@@ -441,6 +543,8 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
     nvidia_provider_origin_ok = False
     semantic_head_space_ok = False
     governance_schema_ok = False
+    adaptive_memory_schema_ok = False
+    adaptive_memory_current_ok = False
     agent_auth_ok = False
     receipt_signing_ok = False
     demo_auth_ok = False
@@ -509,6 +613,101 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
                         raise RuntimeError(
                             "current semantic heads require embedding-space migration"
                         )
+                    cur.execute(
+                        """
+                        SELECT candidate_id, supporting_episode_ids,
+                               rule_key, governance_revision, semantic_embedding_space,
+                               status, observed_from, observed_to
+                        FROM decision_memory_consolidation_candidates LIMIT 0
+                        """
+                    )
+                    cur.execute(
+                        """
+                        SELECT memory_id, candidate_id, supporting_episode_ids,
+                               producer_set, rule_key, governance_revision,
+                               semantic_embedding_space, status,
+                               supersedes_memory_id, observed_from, observed_to
+                        FROM decision_governed_memories LIMIT 0
+                        """
+                    )
+                    cur.execute(
+                        """
+                        SELECT memory_id, episode_id, producer_agent_id
+                        FROM decision_governed_memory_support LIMIT 0
+                        """
+                    )
+                    cur.execute(
+                        """
+                        SELECT scope_id, situation_class, strategy,
+                               semantic_embedding_space, sample_count,
+                               success_count, failure_count, effectiveness,
+                               independent_producer_count, confidence,
+                               observed_to, recorded_at, governance_revision
+                        FROM decision_strategy_effectiveness LIMIT 0
+                        """
+                    )
+                    adaptive_memory_schema_ok = True
+                    cur.execute(
+                        """
+                        SELECT count(*)
+                        FROM decision_governed_memories
+                        WHERE status = 'ACTIVE'
+                          AND (
+                            semantic_embedding_space IS DISTINCT FROM %s
+                            OR governance_revision IS DISTINCT FROM %s
+                          )
+                        """,
+                        (
+                            configured_embedding_space,
+                            ADAPTIVE_MEMORY_GOVERNANCE_REVISION,
+                        ),
+                    )
+                    adaptive_memory_current_ok = int(cur.fetchone()[0]) == 0
+                    if not adaptive_memory_current_ok:
+                        raise RuntimeError(
+                            "active adaptive memories require governance/embedding migration"
+                        )
+                    cur.execute(
+                        """
+                        SELECT count(*)
+                        FROM decision_governed_memories m
+                        WHERE m.status = 'ACTIVE'
+                          AND EXISTS (
+                            SELECT 1
+                            FROM decision_governed_memory_support s
+                            WHERE s.memory_id = m.memory_id
+                              AND NOT EXISTS (
+                                SELECT 1
+                                FROM decision_memory_heads h
+                                WHERE h.scope_id = m.scope_id
+                                  AND h.episode_id = s.episode_id
+                                  AND h.semantic_embedding_space = m.semantic_embedding_space
+                              )
+                          )
+                        """
+                    )
+                    if int(cur.fetchone()[0]) != 0:
+                        adaptive_memory_current_ok = False
+                        raise RuntimeError(
+                            "active adaptive memory has non-current supporting evidence"
+                        )
+                    cur.execute(
+                        """
+                        SELECT count(*)
+                        FROM decision_strategy_effectiveness
+                        WHERE semantic_embedding_space IS DISTINCT FROM %s
+                           OR governance_revision IS DISTINCT FROM %s
+                        """,
+                        (
+                            configured_embedding_space,
+                            ADAPTIVE_MEMORY_GOVERNANCE_REVISION,
+                        ),
+                    )
+                    if int(cur.fetchone()[0]) != 0:
+                        adaptive_memory_current_ok = False
+                        raise RuntimeError(
+                            "strategy effectiveness projection requires migration"
+                        )
                     governance_schema_ok = True
             finally:
                 conn.close()
@@ -553,6 +752,8 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
             secret_ok,
             database_ok,
             governance_schema_ok,
+            adaptive_memory_schema_ok,
+            adaptive_memory_current_ok,
             semantic_embedding_ok,
             semantic_embedding_revision_ok,
             semantic_head_space_ok,
@@ -571,6 +772,9 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
             "secrets_manager": secret_ok,
             "database": database_ok,
             "memory_governance_schema": governance_schema_ok,
+            "adaptive_memory_schema": adaptive_memory_schema_ok,
+            "adaptive_memory_current": adaptive_memory_current_ok,
+            "adaptive_memory_governance_revision": ADAPTIVE_MEMORY_GOVERNANCE_REVISION,
             "semantic_embedding": semantic_embedding_ok,
             "semantic_embedding_revision": semantic_embedding_revision_ok,
             "semantic_embedding_space": configured_embedding_space,
@@ -627,6 +831,7 @@ def _decide(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
             situation=situation,
             strategy=decision.strategy,
             decision_digest=digest,
+            decision_provenance=decision_provenance_payload(decision),
             signing_secret=_execution_secret(),
         )
     else:
@@ -690,6 +895,7 @@ def _execute(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
         decision_digest=snapshot.decision_digest,
         decision_revision=snapshot.decision_revision,
         decision_agent_id=snapshot.agent_id,
+        decision_provenance=snapshot.decision_provenance,
     )
     return {
         "execution_receipt": receipt,
@@ -705,7 +911,8 @@ def _episode_by_receipt(receipt_id: str) -> dict[str, Any] | None:
             cur.execute(
                 """
                 SELECT episode_id::STRING, strategy, outcome, effectiveness,
-                       evidence->>'producer_agent_id', observed_at, recorded_at
+                       evidence->>'producer_agent_id', observed_at, recorded_at,
+                       evidence->>'decision_provenance'
                 FROM decision_episodes
                 WHERE execution_receipt_id = %s
                 LIMIT 1
@@ -717,7 +924,7 @@ def _episode_by_receipt(receipt_id: str) -> dict[str, Any] | None:
         conn.close()
     if row is None:
         return None
-    return {
+    result = {
         "episode_id": row[0],
         "strategy": row[1],
         "outcome": row[2],
@@ -728,6 +935,14 @@ def _episode_by_receipt(receipt_id: str) -> dict[str, Any] | None:
         "execution_receipt_id": receipt_id,
         "idempotent_replay": True,
     }
+    if row[7]:
+        try:
+            provenance = json.loads(str(row[7]))
+        except json.JSONDecodeError:
+            provenance = None
+        if isinstance(provenance, dict):
+            result["decision_provenance"] = provenance
+    return result
 
 
 def _validate_supersession(
@@ -783,9 +998,11 @@ def _decision_payload(decision: Decision) -> dict[str, Any]:
         "reason": decision.reason,
         "memory_influenced": decision.memory_influenced,
         "recalled_episode_ids": list(decision.recalled_episode_ids),
+        "recalled_memory_ids": list(decision.recalled_memory_ids),
         "recalled_producer_agent_ids": list(decision.recalled_producer_agent_ids),
         "memory_resolution": decision.memory_resolution,
         "memory_conflict": decision.memory_conflict,
+        "governance_trace": asdict(decision.governance_trace),
         "model_provider": decision.model_provider,
         "model_explanation": decision.model_explanation,
     }
@@ -937,7 +1154,15 @@ def _record(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
         "execution_issued_at": receipt.issued_at.isoformat(),
         "execution_verified": "true",
         "execution_outcome_source": "decisionvault-payment-recovery-sandbox",
+        "situation_class": receipt.scenario,
     }
+    required, excluded = SCENARIO_APPLICABILITY.get(
+        receipt.scenario, (frozenset(), frozenset())
+    )
+    context_tags = set(derive_context_tags(receipt.situation))
+    context_tags.update(required)
+    evidence["preconditions"] = ",".join(sorted(context_tags))
+    evidence["exclusions"] = ",".join(sorted(excluded))
     if receipt.decision_snapshot_id:
         evidence["decision_snapshot_id"] = receipt.decision_snapshot_id
     if receipt.decision_digest:
@@ -946,6 +1171,22 @@ def _record(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
         evidence["decision_revision"] = receipt.decision_revision
     if receipt.decision_agent_id:
         evidence["decision_agent_id"] = receipt.decision_agent_id
+    if receipt.decision_provenance:
+        evidence["decision_provenance"] = json.dumps(
+            dict(receipt.decision_provenance),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        recalled_memory_ids = receipt.decision_provenance.get(
+            "recalled_memory_ids", []
+        )
+        if isinstance(recalled_memory_ids, list):
+            evidence["decision_recalled_memory_ids"] = ",".join(
+                str(item) for item in recalled_memory_ids
+            )
+        evidence["decision_memory_resolution"] = str(
+            receipt.decision_provenance.get("memory_resolution", "")
+        )
     supersedes_episode_id = str(body.get("supersedes_episode_id", "")).strip()
     if supersedes_episode_id:
         evidence["supersedes_episode_id"] = _validate_supersession(
@@ -979,7 +1220,7 @@ def _record(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
                 "supersession target already has a competing successor"
             ) from exc
         raise
-    return {
+    result = {
         "episode_id": episode.episode_id,
         "strategy": episode.strategy.value,
         "outcome": episode.outcome.value,
@@ -990,6 +1231,8 @@ def _record(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
         "execution_receipt_id": receipt.receipt_id,
         "idempotent_replay": False,
     }
+    result["consolidation"] = _best_effort_consolidation(scope_id)
+    return result
 
 
 def _revoke(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
@@ -1013,13 +1256,16 @@ def _revoke(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
         episode_id=episode_id,
         reason=reason,
     )
-    return {
+    payload = {
         "revocation_id": result.revocation_id,
         "episode_id": result.episode_id,
         "producer_agent_id": result.producer_agent_id,
         "revoked": True,
         "idempotent_replay": result.idempotent_replay,
     }
+    if not result.idempotent_replay:
+        payload["consolidation"] = _best_effort_consolidation(scope_id)
+    return payload
 
 
 def _enforce_rate_limit(

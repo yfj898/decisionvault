@@ -23,8 +23,9 @@ def test_managed_mcp_bearer_endpoint_is_fixed():
 
 
 class FakeMcpClient:
-    def __init__(self, *, semantic=False):
+    def __init__(self, *, semantic=False, adaptive=False):
         self.semantic = semantic
+        self.adaptive = adaptive
         self.calls = []
 
     def initialize(self):
@@ -49,6 +50,21 @@ class FakeMcpClient:
         self.calls.append((name, arguments["query"]))
         assert arguments["database"] == "defaultdb"
         if name == "select_query":
+            if "decision_governed_memories" in arguments["query"]:
+                assert self.adaptive is True
+                return {
+                    "result": {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": (
+                                    "scope=shared-team producer_set=[recovery-observer-a,"
+                                    "recovery-observer-b] supporting_episode_ids=[a,b]"
+                                ),
+                            }
+                        ]
+                    }
+                }
             expected_table = (
                 "decision_memory_heads" if self.semantic else "decision_episodes"
             )
@@ -67,6 +83,36 @@ class FakeMcpClient:
                 }
             }
         if name == "explain_query":
+            if "decision_governed_memories" in arguments["query"]:
+                assert self.adaptive is True
+                if "decision_governed_memory_support" in arguments["query"]:
+                    return {
+                        "result": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": (
+                                        "scan decision_governed_memories filter "
+                                        "decision_governed_memory_support "
+                                        "decision_memory_heads"
+                                    ),
+                                }
+                            ]
+                        }
+                    }
+                return {
+                    "result": {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": (
+                                    "vector search "
+                                    "decision_governed_memories_scope_space_semantic_vec_idx"
+                                ),
+                            }
+                        ]
+                    }
+                }
             if self.semantic and "NOT EXISTS" in arguments["query"]:
                 return {
                     "result": {
@@ -122,3 +168,29 @@ def test_memory_auditor_agent_checks_production_semantic_contract():
     assert "decision_memory_revocations" not in explain_queries[0]
     assert "decision_memory_revocations" in explain_queries[1]
     assert "memory_status" in explain_queries[1]
+
+
+def test_memory_auditor_agent_checks_adaptive_memory_dvi_and_lineage_contract():
+    client = FakeMcpClient(semantic=True, adaptive=True)
+    result = MemoryAuditorAgent(client).audit_scope(
+        scope_id="shared-team",
+        situation="replacement card checkout failure",
+        semantic_query_vector=[0.1, 0.9],
+        semantic_embedding_space="test-space-v1",
+        adaptive=True,
+    )
+    assert result.passed is True
+    assert result.adaptive_memory_visible is True
+    assert result.adaptive_provenance_visible is True
+    assert result.adaptive_vector_plan_visible is True
+    assert result.adaptive_vector_index_visible is True
+    assert result.adaptive_coverage_plan_visible is True
+    explain_queries = [query for name, query in client.calls if name == "explain_query"]
+    adaptive_queries = [
+        query for query in explain_queries if "decision_governed_memories" in query
+    ]
+    assert len(adaptive_queries) == 2
+    assert "LIMIT 32" in adaptive_queries[0]
+    assert "decision_governed_memory_support" not in adaptive_queries[0]
+    assert "decision_governed_memory_support" in adaptive_queries[1]
+    assert "decision_memory_heads" in adaptive_queries[1]

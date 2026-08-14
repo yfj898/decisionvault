@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import hmac
 import json
-from typing import Any
+from typing import Any, Mapping
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from decisionvault.domain import Decision, Outcome, Strategy
@@ -16,7 +16,7 @@ LEGACY_RECEIPT_VERSION = 1
 DEFAULT_RECEIPT_TTL_SECONDS = 900
 DECISION_SNAPSHOT_VERSION = 1
 DECISION_SNAPSHOT_TTL_SECONDS = 300
-DECISION_CONTRACT_REVISION = "outcome-aware-governed-memory-v1"
+DECISION_CONTRACT_REVISION = "governed-adaptive-memory-v2"
 
 
 SANDBOX_OUTCOMES: dict[str, dict[Strategy, tuple[Outcome, float]]] = {
@@ -70,6 +70,7 @@ class VerifiedExecutionReceipt:
     decision_digest: str | None = None
     decision_revision: str | None = None
     decision_agent_id: str | None = None
+    decision_provenance: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +85,7 @@ class VerifiedDecisionSnapshot:
     decision_revision: str
     issued_at: datetime
     signature: str
+    decision_provenance: Mapping[str, Any]
 
 
 class DecisionSnapshotStale(RuntimeError):
@@ -127,7 +129,9 @@ def decision_state_digest(
         "memory_resolution": decision.memory_resolution,
         "memory_conflict": decision.memory_conflict,
         "recalled_episode_ids": list(decision.recalled_episode_ids),
+        "recalled_memory_ids": list(decision.recalled_memory_ids),
         "recalled_producer_agent_ids": list(decision.recalled_producer_agent_ids),
+        "governance_trace": asdict(decision.governance_trace),
     }
     return sha256(
         json.dumps(
@@ -139,6 +143,19 @@ def decision_state_digest(
     ).hexdigest()
 
 
+def decision_provenance_payload(decision: Decision) -> dict[str, Any]:
+    """Canonical human-auditable provenance committed into signed snapshots."""
+
+    return {
+        "recalled_episode_ids": list(decision.recalled_episode_ids),
+        "recalled_memory_ids": list(decision.recalled_memory_ids),
+        "recalled_producer_agent_ids": list(decision.recalled_producer_agent_ids),
+        "memory_resolution": decision.memory_resolution,
+        "memory_conflict": decision.memory_conflict,
+        "governance_trace": asdict(decision.governance_trace),
+    }
+
+
 def issue_decision_snapshot(
     *,
     scope_id: str,
@@ -148,6 +165,7 @@ def issue_decision_snapshot(
     decision_digest: str,
     signing_secret: str,
     decision_revision: str = DECISION_CONTRACT_REVISION,
+    decision_provenance: Mapping[str, Any] | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     issued_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -160,6 +178,7 @@ def issue_decision_snapshot(
         "strategy": strategy.value,
         "decision_digest": decision_digest,
         "decision_revision": decision_revision,
+        "decision_provenance": dict(decision_provenance or {}),
         "issued_at": issued_at.isoformat(),
     }
     payload["signature"] = _sign(payload, signing_secret)
@@ -203,6 +222,9 @@ def verify_decision_snapshot(
         raise ValueError("decision snapshot strategy does not match execution request")
     if decision_revision != DECISION_CONTRACT_REVISION:
         raise DecisionSnapshotStale("decision snapshot revision is no longer current")
+    provenance = payload.get("decision_provenance", {})
+    if not isinstance(provenance, dict):
+        raise ValueError("decision snapshot provenance must be an object")
 
     issued_at = datetime.fromisoformat(str(payload.get("issued_at", "")))
     if issued_at.tzinfo is None:
@@ -225,6 +247,7 @@ def verify_decision_snapshot(
         decision_revision=decision_revision,
         issued_at=issued_at,
         signature=signature,
+        decision_provenance=provenance,
     )
 
 
@@ -240,6 +263,7 @@ def issue_sandbox_receipt(
     decision_digest: str | None = None,
     decision_revision: str | None = None,
     decision_agent_id: str | None = None,
+    decision_provenance: Mapping[str, Any] | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     scenario_outcomes = SANDBOX_OUTCOMES.get(scenario)
@@ -274,6 +298,7 @@ def issue_sandbox_receipt(
                 "decision_digest": decision_digest,
                 "decision_revision": decision_revision,
                 "decision_agent_id": decision_agent_id,
+                "decision_provenance": dict(decision_provenance or {}),
             }
         )
     payload["signature"] = _sign(payload, signing_secret)
@@ -343,6 +368,7 @@ def verify_execution_receipt(
     decision_digest = str(payload.get("decision_digest", "")).strip() or None
     decision_revision = str(payload.get("decision_revision", "")).strip() or None
     decision_agent_id = str(payload.get("decision_agent_id", "")).strip() or None
+    decision_provenance: Mapping[str, Any] | None = None
     if version == RECEIPT_VERSION:
         if not all(
             (decision_snapshot_id, decision_digest, decision_revision, decision_agent_id)
@@ -350,6 +376,10 @@ def verify_execution_receipt(
             raise ValueError("snapshot-bound execution receipt is missing decision binding")
         if decision_revision != DECISION_CONTRACT_REVISION:
             raise ValueError("execution receipt decision revision is unsupported")
+        provenance = payload.get("decision_provenance", {})
+        if not isinstance(provenance, dict):
+            raise ValueError("execution receipt decision_provenance must be an object")
+        decision_provenance = provenance
 
     return VerifiedExecutionReceipt(
         version=version,
@@ -368,6 +398,7 @@ def verify_execution_receipt(
         decision_digest=decision_digest,
         decision_revision=decision_revision,
         decision_agent_id=decision_agent_id,
+        decision_provenance=decision_provenance,
     )
 
 

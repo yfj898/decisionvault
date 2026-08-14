@@ -6,6 +6,16 @@ from typing import Callable, Sequence
 import json
 from uuid import uuid4
 
+from decisionvault.adaptive_memory import (
+    ADAPTIVE_MEMORY_GOVERNANCE_REVISION,
+    Applicability,
+    GovernedMemory,
+    MemoryClass,
+    MemoryPolarity,
+    MemoryScopeLevel,
+    MemoryStatus,
+    MemoryType,
+)
 from decisionvault.domain import (
     DecisionEpisode,
     Outcome,
@@ -13,7 +23,12 @@ from decisionvault.domain import (
     Strategy,
 )
 from decisionvault.memory.retry import retry_cockroach_serialization
-from decisionvault.memory.governed_query import semantic_ann_sql, semantic_coverage_sql
+from decisionvault.memory.governed_query import (
+    adaptive_semantic_ann_sql,
+    adaptive_semantic_coverage_sql,
+    semantic_ann_sql,
+    semantic_coverage_sql,
+)
 
 
 Vector = Sequence[float]
@@ -39,10 +54,62 @@ class MemoryRevocationResult:
 class ProducerRetirementResult:
     retired_heads: int
     producer_agent_ids: tuple[str, ...]
+    scope_ids: tuple[str, ...] = ()
 
 
 def _vector_literal(vector: Vector) -> str:
     return "[" + ",".join(f"{float(value):.8f}" for value in vector) + "]"
+
+
+def _string_tuple(value: object) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    parsed = value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            parsed = [value]
+    if isinstance(parsed, (tuple, list, set, frozenset)):
+        return tuple(str(item) for item in parsed)
+    return (str(parsed),)
+
+
+def _adaptive_memory_from_row(row: tuple[object, ...]) -> GovernedMemory:
+    distance = max(0.0, min(1.0, float(row[28])))
+    return GovernedMemory(
+        memory_id=str(row[0]),
+        candidate_id=str(row[1]),
+        scope_id=str(row[2]),
+        scope_level=MemoryScopeLevel(str(row[3])),
+        memory_type=MemoryType(str(row[4])),
+        polarity=MemoryPolarity(str(row[5])),
+        situation_class=str(row[6]),
+        applicability=Applicability(
+            preconditions=frozenset(_string_tuple(row[7])),
+            exclusions=frozenset(_string_tuple(row[8])),
+        ),
+        intervention=Strategy(str(row[9])),
+        expected_outcome=Outcome(str(row[10])),
+        supporting_episode_ids=_string_tuple(row[11]),
+        producer_set=_string_tuple(row[12]),
+        positive_episode_ids=_string_tuple(row[13]),
+        negative_episode_ids=_string_tuple(row[14]),
+        confidence=float(row[15]),
+        observed_from=row[16],
+        observed_to=row[17],
+        created_at=row[18],
+        recorded_at=row[19],
+        governance_revision=str(row[20]),
+        semantic_embedding_space=str(row[21]),
+        memory_class=MemoryClass(str(row[22])),
+        expires_at=row[23],
+        status=MemoryStatus(str(row[24])),
+        supersedes_memory_id=str(row[25]) if row[25] is not None else None,
+        revoked_at=row[26],
+        revocation_reason=str(row[27]) if row[27] is not None else None,
+        similarity=1.0 - distance,
+    )
 
 
 @dataclass(slots=True)
@@ -266,6 +333,30 @@ class CockroachVectorMemoryStore:
                                 episode.recorded_at,
                             ),
                         )
+                    if semantic_vector is not None and producer_agent_id:
+                        cur.execute(
+                            """
+                            UPDATE decision_governed_memories
+                            SET status = 'REVOKED',
+                                revoked_at = now(),
+                                revocation_reason = 'support episode is no longer a current head'
+                            WHERE scope_id = %s
+                              AND status = 'ACTIVE'
+                              AND EXISTS (
+                                SELECT 1
+                                FROM decision_governed_memory_support s
+                                WHERE s.memory_id = decision_governed_memories.memory_id
+                                  AND NOT EXISTS (
+                                    SELECT 1
+                                    FROM decision_memory_heads h
+                                    WHERE h.scope_id = decision_governed_memories.scope_id
+                                      AND h.episode_id = s.episode_id
+                                      AND h.semantic_embedding_space = %s
+                                  )
+                              )
+                            """,
+                            (episode.scope_id, semantic_space),
+                        )
                 conn.commit()
             except Exception:
                 rollback = getattr(conn, "rollback", None)
@@ -341,6 +432,26 @@ class CockroachVectorMemoryStore:
                             reason,
                         ),
                     )
+                    cur.execute(
+                        """
+                        UPDATE decision_governed_memories
+                        SET status = 'REVOKED',
+                            revoked_at = now(),
+                            revocation_reason = %s
+                        WHERE scope_id = %s
+                          AND status = 'ACTIVE'
+                          AND memory_id IN (
+                            SELECT memory_id
+                            FROM decision_governed_memory_support
+                            WHERE episode_id = %s::UUID
+                          )
+                        """,
+                        (
+                            "support episode revoked: " + reason,
+                            scope_id,
+                            episode_id,
+                        ),
+                    )
                 conn.commit()
                 return MemoryRevocationResult(
                     revocation_id=revocation_id,
@@ -372,6 +483,7 @@ class CockroachVectorMemoryStore:
             conn = self.connection_factory()
             retired = 0
             retired_producers: list[str] = []
+            retired_scopes: list[str] = []
             try:
                 with conn.cursor() as cur:
                     cur.execute(
@@ -407,12 +519,34 @@ class CockroachVectorMemoryStore:
                             """,
                             (str(uuid4()), scope_id, episode_id, producer, reason),
                         )
+                        cur.execute(
+                            """
+                            UPDATE decision_governed_memories
+                            SET status = 'REVOKED',
+                                revoked_at = now(),
+                                revocation_reason = %s
+                            WHERE scope_id = %s
+                              AND status = 'ACTIVE'
+                              AND memory_id IN (
+                                SELECT memory_id
+                                FROM decision_governed_memory_support
+                                WHERE episode_id = %s::UUID
+                              )
+                            """,
+                            (
+                                "support producer retired: " + reason,
+                                scope_id,
+                                episode_id,
+                            ),
+                        )
                         retired += 1
                         retired_producers.append(producer)
+                        retired_scopes.append(str(scope_id))
                 conn.commit()
                 return ProducerRetirementResult(
                     retired_heads=retired,
                     producer_agent_ids=tuple(dict.fromkeys(retired_producers)),
+                    scope_ids=tuple(dict.fromkeys(retired_scopes)),
                 )
             except Exception:
                 rollback = getattr(conn, "rollback", None)
@@ -535,6 +669,75 @@ class CockroachVectorMemoryStore:
                 )
             )
         return recalled
+
+    def recall_adaptive(
+        self,
+        *,
+        scope_id: str,
+        situation: str,
+        minimum_similarity: float,
+    ) -> list[GovernedMemory]:
+        """Recall promoted L2/L3 knowledge with DVI fast path + exact coverage."""
+
+        if self.semantic_query_embedder is None:
+            return []
+        if not 0.0 <= minimum_similarity <= 1.0:
+            raise ValueError("minimum_similarity must be between 0 and 1")
+        semantic_space = (self.semantic_embedding_space or "").strip()
+        if not semantic_space:
+            raise ValueError("semantic_embedding_space is required")
+
+        vector = _vector_literal(self.semantic_query_embedder(situation))
+        max_distance = 1.0 - minimum_similarity
+        ann_sql = adaptive_semantic_ann_sql(
+            vector_expr="%s::VECTOR",
+            scope_expr="%s",
+            space_expr="%s",
+        )
+        coverage_sql = adaptive_semantic_coverage_sql(
+            vector_expr="%s::VECTOR",
+            scope_expr="%s",
+            space_expr="%s",
+            governance_revision_expr="%s",
+            max_distance_expr="%s",
+        )
+
+        def read_transaction():
+            conn = self.connection_factory()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(ann_sql, (vector, scope_id, semantic_space, vector))
+                    ann_rows = cur.fetchall()
+                    cur.execute(
+                        coverage_sql,
+                        (
+                            vector,
+                            scope_id,
+                            semantic_space,
+                            ADAPTIVE_MEMORY_GOVERNANCE_REVISION,
+                            vector,
+                            max_distance,
+                        ),
+                    )
+                    coverage_rows = cur.fetchall()
+                # Exact coverage is authoritative. Executing the ANN query
+                # proves/warms the DVI fast path, while support-lineage checks
+                # in coverage prevent a stale ANN hit from bypassing governance.
+                _ = ann_rows
+                return sorted(
+                    (tuple(row) for row in coverage_rows),
+                    key=lambda row: float(row[28]),
+                )
+            except Exception:
+                rollback = getattr(conn, "rollback", None)
+                if callable(rollback):
+                    rollback()
+                raise
+            finally:
+                conn.close()
+
+        rows = retry_cockroach_serialization(read_transaction)
+        return [_adaptive_memory_from_row(tuple(row)) for row in rows]
 
     def recall_governed(
         self,

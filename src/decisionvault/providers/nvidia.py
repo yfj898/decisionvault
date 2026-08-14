@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 import json
 from urllib.request import Request
 
@@ -48,14 +48,21 @@ class NvidiaDecisionAdvisor:
         committed_strategy = (
             decision.strategy.value if decision.strategy is not None else "NONE"
         )
+        trace = json.dumps(
+            asdict(decision.governance_trace),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
         prompt = (
             f"Situation: {situation}\n"
             f"Committed strategy: {committed_strategy}\n"
             f"Deterministic reason: {decision.reason}\n"
+            f"Governance trace: {trace}\n"
+            f"Selected governed memory IDs: {list(decision.recalled_memory_ids)}\n"
             f"Recalled memory evidence:\n{memory_block}\n\n"
-            "In at most 60 words, explain why the committed strategy is "
-            "consistent with the recalled outcomes. Do not recommend another "
-            "strategy."
+            "In at most 60 words, explain the already-committed governance trace "
+            "and why the committed strategy is consistent with the admitted "
+            "evidence. Do not recommend another strategy or alter the trace."
         )
         body = json.dumps(
             {

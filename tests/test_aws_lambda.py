@@ -902,6 +902,7 @@ def test_security_reconciliation_retires_absent_producers(monkeypatch):
 
         def retire_untrusted_heads(self, **kwargs):
             self.calls.append(kwargs)
+            return type("Retirement", (), {"scope_ids": ()})()
 
     store = Store()
     monkeypatch.setenv("DECISIONVAULT_SECRET_ARN", "arn:test")
@@ -924,3 +925,19 @@ def test_security_reconciliation_retires_absent_producers(monkeypatch):
     active = store.calls[0]["active_producer_agent_ids"]
     assert "active-agent" in active
     assert "recovery-observer" in active
+
+
+def test_consolidation_failure_defers_without_creating_ungoverned_memory(monkeypatch):
+    monkeypatch.setattr(
+        aws_lambda,
+        "_consolidate_scope",
+        lambda _scope_id: (_ for _ in ()).throw(RuntimeError("provider unavailable")),
+    )
+
+    result = aws_lambda._best_effort_consolidation("demo")
+
+    assert result["status"] == "DEFERRED"
+    assert result["promoted_count"] == 0
+    assert result["memory_ids"] == []
+    assert result["governance_revision"] == "governed-adaptive-memory-v1"
+    assert result["resolutions"] == ["CONSOLIDATION_DEFERRED:RuntimeError"]

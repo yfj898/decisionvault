@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Mapping
 from uuid import uuid4
 
+from decisionvault.adaptive_memory import WorkingMemory
 from decisionvault.domain import Decision, DecisionAction, DecisionEpisode, Outcome
 from decisionvault.memory.base import MemoryStore
 from decisionvault.agent.policy import OutcomeAwarePolicy
@@ -23,7 +24,9 @@ class DecisionAgent:
     agent_id: str = "decision-agent"
 
     def decide(self, *, scope_id: str, situation: str) -> Decision:
+        working = WorkingMemory.from_request(scope_id=scope_id, situation=situation)
         recalled: list = []
+        adaptive_memories: list = []
         if self.memory_enabled:
             governed_recall = getattr(self.memory, "recall_governed", None)
             if callable(governed_recall):
@@ -42,7 +45,18 @@ class DecisionAgent:
                     situation=situation,
                     limit=GOVERNANCE_ANN_CANDIDATE_HINT,
                 )
-        decision = self.policy.decide(recalled=recalled)
+            recall_adaptive = getattr(self.memory, "recall_adaptive", None)
+            if callable(recall_adaptive):
+                adaptive_memories = recall_adaptive(
+                    scope_id=scope_id,
+                    situation=situation,
+                    minimum_similarity=self.policy.adaptive_resolver.minimum_similarity,
+                )
+        decision = self.policy.decide(
+            recalled=recalled,
+            adaptive_memories=adaptive_memories,
+            context_tags=working.context_tags,
+        )
         if self.advisor is None or decision.action == DecisionAction.ABSTAIN:
             return decision
 

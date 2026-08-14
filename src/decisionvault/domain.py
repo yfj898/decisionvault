@@ -24,6 +24,20 @@ class DecisionAction(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class DecisionGovernanceTrace:
+    """Deterministic memory filtering/selection trace attached to a decision."""
+
+    episodic_candidates: int = 0
+    adaptive_candidates: int = 0
+    adaptive_applicable: int = 0
+    adaptive_rejected: int = 0
+    vetoed_strategies: tuple[str, ...] = ()
+    selected_episode_ids: tuple[str, ...] = ()
+    selected_memory_ids: tuple[str, ...] = ()
+    conflict: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class DecisionEpisode:
     episode_id: str
     scope_id: str
@@ -75,10 +89,14 @@ class Decision:
     reason: str
     action: DecisionAction = DecisionAction.EXECUTE
     recalled_episode_ids: tuple[str, ...] = ()
+    recalled_memory_ids: tuple[str, ...] = ()
     recalled_producer_agent_ids: tuple[str, ...] = ()
     memory_influenced: bool = False
     memory_resolution: str = "NO_SIGNAL"
     memory_conflict: bool = False
+    governance_trace: DecisionGovernanceTrace = field(
+        default_factory=DecisionGovernanceTrace
+    )
     model_explanation: str | None = None
     model_provider: str | None = None
 

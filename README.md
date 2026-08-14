@@ -2,12 +2,13 @@
 
 [![CI](https://github.com/yfj898/decisionvault/actions/workflows/ci.yml/badge.svg)](https://github.com/yfj898/decisionvault/actions/workflows/ci.yml)
 
-**Outcome-aware shared decision memory for agent teams.**
+**Governed adaptive memory and decision infrastructure for agent teams.**
 
 DecisionVault is a new project for the **CockroachDB × AWS Hackathon — Build with Agentic Memory**.
 
-The core claim is deliberately narrow and testable. DecisionVault is a reusable
-outcome-memory pattern, demonstrated end-to-end on a payment-recovery agent team:
+DecisionVault turns verified multi-agent experience into reusable knowledge while
+preserving provenance, conflict awareness, scope isolation, and execution safety.
+The payment-recovery agent team remains the deterministic end-to-end proof:
 
 > An agent should remember not only what happened, but which strategy it used, whether it worked, and how that evidence should change the next decision.
 
@@ -38,12 +39,75 @@ CockroachDB Cloud shared persistent memory
    +----> Managed MCP evidence path
    |
    v
-Outcome-aware deterministic policy
+L1 governed episodic memory
+   |
+   +----> deterministic consolidation candidate
+   +----> independent promotion governance
+   |
+   v
+L2 semantic effectiveness + L3 procedural/avoidance memory
+   |
+   v
+Applicability + negative veto + hard-conflict governance
+   |
+   v
+Deterministic policy
    |
    +----> NVIDIA semantic embeddings + explanation-only advisor
    |
    v
 Strategy + grounded explanation
+```
+
+## Governed Adaptive Memory
+
+The production memory model is intentionally layered rather than "more vectors":
+
+```text
+L0 Working Memory       request-local context; never persisted
+L1 Episodic Memory      immutable DecisionEpisode + governed current heads
+L2 Semantic Memory      strategy × situation-class effectiveness projection
+L3 Procedural Memory    promoted reusable rule or AVOID rule
+```
+
+L2/L3 knowledge is never written directly by an LLM. `MemoryConsolidator`
+produces only deterministic candidates. `MemoryConsolidationGovernor` then
+revalidates the candidate against current heads, distinct producers, explicit
+applicability, embedding generation, evidence freshness, revocation/supersession,
+and independent contradiction before promotion. Team knowledge needs at least
+two distinct producers; global knowledge needs at least three. Repeated writes
+from one producer do not increase promotion confidence.
+
+Promoted knowledge stores the evidence window, supporting episode IDs, producer
+set, positive/negative evidence, confidence, governance revision, semantic
+embedding space, applicability preconditions/exclusions, and supersession or
+revocation lineage. Negative memory is a veto (`AVOID strategy X WHEN Y`) and is
+applied before positive ranking. Semantic similarity alone is never sufficient:
+applicability and governance must also pass.
+
+The final decision carries a deterministic governance trace and selected L1/L3
+IDs. That provenance is committed into the decision-state digest, copied into the
+signed Decision Snapshot, copied again into the signed Execution Receipt, and
+persisted with the verified outcome episode. The explanation-only advisor may
+describe this committed trace but cannot alter it.
+
+Apply the production v6 schema with a migration-admin connection and explicit
+public CockroachDB CA input. The migration runner commits each CockroachDB schema
+change separately and does not require expanding the Lambda runtime role beyond
+table-level DML:
+
+```bash
+python scripts/apply_governed_adaptive_memory_v6.py \
+  --database-url-file /path/to/migration-database-url \
+  --ca-file /path/to/cockroach-cloud-root.crt
+```
+
+After the migration, the real adaptive-memory adversarial/concurrency smoke uses
+the normal runtime `DATABASE_URL`, NVIDIA embedding configuration, and always
+cleans its temporary scopes in `finally`:
+
+```bash
+python scripts/adaptive_memory_cloud_smoke.py
 ```
 
 Verified competition integrations:
