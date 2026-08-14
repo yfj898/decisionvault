@@ -428,6 +428,13 @@ repository. See `docs/evidence/PHASE4_MANAGED_MCP.md`.
 
 ## Security
 
+The hosted Lambda uses a dedicated CockroachDB `decisionvault_runtime` identity
+rather than the migration/admin account. It has only the table privileges needed
+by the current application (`SELECT/INSERT/DELETE` on immutable episodes and
+`SELECT/INSERT/UPDATE/DELETE` on governed heads); schema CREATE is denied. Schema
+migrations use a separately retained admin connection outside the Lambda
+environment.
+
 Never commit:
 
 - CockroachDB connection strings

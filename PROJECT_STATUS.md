@@ -136,3 +136,10 @@ Same-producer current-head validation: PASS
 Non-current supersession target rejected: HTTP 409
 Hosted typed supersession history/head proof: PASS
 Typed supersession temporary rows cleanup: 0 rows
+Dedicated CockroachDB `decisionvault_runtime` user: PASS
+Runtime `decision_episodes` privileges limited to SELECT / INSERT / DELETE: PASS
+Runtime `decision_memory_heads` privileges limited to SELECT / INSERT / UPDATE / DELETE: PASS
+Runtime schema CREATE denied with `InsufficientPrivilege`: PASS
+Migration-admin schema CREATE preserved separately: PASS
+Lambda switched to least-privilege CockroachDB runtime identity: PASS
+Least-privilege hosted app regression: PASS
