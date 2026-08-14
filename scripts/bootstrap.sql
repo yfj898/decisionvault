@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS decision_episodes (
     supersedes_episode_id UUID,
     embedding VECTOR(64) NOT NULL,
     semantic_embedding VECTOR(1024),
+    semantic_embedding_space STRING,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -38,8 +39,19 @@ CREATE TABLE IF NOT EXISTS decision_memory_heads (
     execution_receipt_id STRING,
     supersedes_episode_id UUID,
     semantic_embedding VECTOR(1024) NOT NULL,
+    semantic_embedding_space STRING NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (scope_id, producer_agent_id, strategy)
+);
+
+CREATE TABLE IF NOT EXISTS decision_memory_revocations (
+    revocation_id UUID PRIMARY KEY,
+    scope_id STRING NOT NULL,
+    episode_id UUID NOT NULL,
+    producer_agent_id STRING NOT NULL,
+    reason STRING NOT NULL,
+    revoked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (scope_id, episode_id)
 );
 
 CREATE TABLE IF NOT EXISTS decision_rate_limits (

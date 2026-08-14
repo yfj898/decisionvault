@@ -377,9 +377,13 @@ def main() -> int:
         conflict_pass = cdp.evaluate(
             "document.getElementById('governanceDelta').textContent.startsWith('PASS')"
             " && document.getElementById('governanceDelta').textContent.includes('CONFLICT_ABSTAIN')"
+            " && document.getElementById('governanceDelta').textContent.includes('action=ABSTAIN')"
+            " && document.getElementById('governanceDelta').textContent.includes('executable=false')"
         )
         if not conflict_pass:
-            raise DemoFailure("conflict proof completed without CONFLICT_ABSTAIN PASS")
+            raise DemoFailure(
+                "conflict proof completed without non-executable CONFLICT_ABSTAIN PASS"
+            )
         _scroll_to(cdp, "governanceDelta")
         print("PASS gate: contradictory shared memory abstention visible")
         _pause_until(started, 116.0)

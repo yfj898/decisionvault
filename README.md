@@ -132,8 +132,12 @@ writes from one producer cannot crowd independent producers out of the ANN
 candidate set:
 
 ```sql
-CREATE VECTOR INDEX decision_memory_heads_scope_semantic_vec_idx
-ON decision_memory_heads (scope_id, semantic_embedding vector_cosine_ops);
+CREATE VECTOR INDEX decision_memory_heads_scope_space_semantic_vec_idx
+ON decision_memory_heads (
+  scope_id,
+  semantic_embedding_space,
+  semantic_embedding vector_cosine_ops
+);
 ```
 
 The immutable `decision_episodes` history remains the audit log; the
@@ -175,9 +179,9 @@ Agent A · recovery-observer
 
 The same Agent B in another scope remains on `GENERIC_RETRY`, proving that the
 retrieval layer is scope-bounded rather than globally broadcast. The protected
-`/record` and `/decide` APIs add a separate authorization boundary: opaque
+`/record`, `/decide`, `/execute`, and `/revoke` APIs add a separate authorization boundary: opaque
 per-agent tokens are hashed server-side and bind identity, permitted scope
-prefixes, permissions, and trust. Callers cannot self-assert `agent_id` in the
+namespaces, permissions, and trust. Callers cannot self-assert `agent_id` in the
 request body.
 
 The live CockroachDB Cloud semantic smoke uses NVIDIA
@@ -203,11 +207,23 @@ governance rules:
   through typed `supersedes_episode_id UUID` while immutable history remains in
   `decision_episodes`; the target must belong to the same authenticated producer,
   remain the current governed head, and may have only one direct successor;
+- **authenticated revocation** — `/revoke` requires both an authenticated
+  producer capability (`revoke`, or the already-deployed `record` capability as
+  a compatibility bridge) and an independent server-side `REVOKE_AGENT_IDS`
+  allowlist opt-in; an authorized producer may remove only its own current head;
+  immutable outcome history remains in `decision_episodes` and an append-only
+  `decision_memory_revocations` event records who revoked which episode and why;
+- **embedding-space isolation** — semantic heads and immutable semantic records
+  carry `semantic_embedding_space`; production retrieval filters by model +
+  dimension + query/passage contract before vector ranking, so a model change
+  cannot silently compare incompatible vectors;
 - **candidate-crowding resistance** — production recall reads
   `decision_memory_heads`, whose primary key keeps one current head per producer
   and strategy, so repeated writes cannot fill the ANN top-K before governance;
 - **contradiction surfacing** — similarly strong conflicting memories return
-  `CONFLICT_ABSTAIN` instead of silently selecting one side;
+  `CONFLICT_ABSTAIN` with `strategy=null`, `action=ABSTAIN`, and
+  `executable=false`; the execution gateway re-runs the current deterministic
+  policy and will not sign an execution receipt while the abstention is active;
 - **server-bound identity and trust** — `AGENT_AUTH_JSON` is keyed by SHA-256
   digests of opaque agent tokens and binds `agent_id`, scope prefixes,
   permissions, and trust. Unknown producers receive a conservative default when
@@ -217,7 +233,7 @@ governance rules:
 The real CockroachDB Cloud + NVIDIA semantic governance smoke verified:
 
 ```text
-balanced conflict      → GENERIC_RETRY / CONFLICT_ABSTAIN
+balanced conflict      → strategy=null / action=ABSTAIN / CONFLICT_ABSTAIN
 trusted resolution     → REFRESH_PAYMENT_TOKEN / conflict still visible
 120-day stale success  → ignored
 superseded success     → old episode no longer participates
@@ -238,7 +254,9 @@ two contradictory outcomes from two producer agents into one temporary shared
 scope, asks a third agent to decide, and returns:
 
 ```text
-strategy=GENERIC_RETRY
+strategy=null
+action=ABSTAIN
+executable=false
 memory_influenced=false
 memory_resolution=CONFLICT_ABSTAIN
 memory_conflict=true
@@ -255,9 +273,10 @@ See `docs/evidence/MULTI_AGENT_MEMORY_GOVERNANCE.md`.
 DecisionVault is deployed as an AWS Lambda Python 3.12 function in
 `ap-northeast-1` with a Lambda Function URL. `GET /health` is public for
 availability checks. Judge-only atomic demo routes use the private
-`X-DecisionVault-Token`. General `/record` and `/decide` routes instead require
+`X-DecisionVault-Token`. General `/record`, `/decide`, `/execute`, and `/revoke` routes instead require
 an `X-DecisionVault-Agent-Token` whose digest is mapped server-side to an agent
-identity, allowed scope prefixes, permissions, and trust.
+identity, namespace-bounded scope permissions, and trust. `/revoke` additionally
+requires the server-controlled `REVOKE_AGENT_IDS` allowlist.
 
 The live deployment proved the full hosted causal path:
 
@@ -396,7 +415,7 @@ The original live MCP evidence exposed the historical `VECTOR(64)` regression
 column and Phase 3 DVI. The repository-owned `MemoryAuditorAgent` now also supports
 the production semantic contract: `decision_memory_heads`, native
 `semantic_embedding VECTOR(1024)`, and
-`decision_memory_heads_scope_semantic_vec_idx`. Run the auditor with
+`decision_memory_heads_scope_space_semantic_vec_idx`. Run the auditor with
 `--semantic` to audit that production query plan. The temporary evidence row is
 removed after verification.
 

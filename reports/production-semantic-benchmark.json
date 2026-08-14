@@ -2,9 +2,12 @@
   "benchmark": "decisionvault-production-semantic-conformance",
   "cases": [
     {
+      "actual_action": "EXECUTE",
       "actual_strategy": "REFRESH_PAYMENT_TOKEN",
       "case_id": "failed-retry-card-reissue",
       "conflict": false,
+      "executable": true,
+      "expected_action": "EXECUTE",
       "expected_strategy": "REFRESH_PAYMENT_TOKEN",
       "family": "failed_generic_adaptation",
       "memory_influenced": true,
@@ -17,9 +20,12 @@
       "top_similarity": 0.48095771192361036
     },
     {
+      "actual_action": "EXECUTE",
       "actual_strategy": "REFRESH_PAYMENT_TOKEN",
       "case_id": "failed-retry-wallet-credential",
       "conflict": false,
+      "executable": true,
+      "expected_action": "EXECUTE",
       "expected_strategy": "REFRESH_PAYMENT_TOKEN",
       "family": "failed_generic_adaptation",
       "memory_influenced": true,
@@ -32,9 +38,12 @@
       "top_similarity": 0.5811165020467286
     },
     {
+      "actual_action": "EXECUTE",
       "actual_strategy": "REFRESH_PAYMENT_TOKEN",
       "case_id": "successful-token-refresh",
       "conflict": false,
+      "executable": true,
+      "expected_action": "EXECUTE",
       "expected_strategy": "REFRESH_PAYMENT_TOKEN",
       "family": "successful_refresh_reuse",
       "memory_influenced": true,
@@ -47,9 +56,12 @@
       "top_similarity": 0.6164441750787204
     },
     {
+      "actual_action": "EXECUTE",
       "actual_strategy": "VERIFY_BILLING_PROFILE",
       "case_id": "successful-billing-profile",
       "conflict": false,
+      "executable": true,
+      "expected_action": "EXECUTE",
       "expected_strategy": "VERIFY_BILLING_PROFILE",
       "family": "successful_billing_reuse",
       "memory_influenced": true,
@@ -62,9 +74,12 @@
       "top_similarity": 0.5245272739706979
     },
     {
+      "actual_action": "EXECUTE",
       "actual_strategy": "GENERIC_RETRY",
       "case_id": "low-confidence-failure",
       "conflict": false,
+      "executable": true,
+      "expected_action": "EXECUTE",
       "expected_strategy": "GENERIC_RETRY",
       "family": "low_confidence_control",
       "memory_influenced": false,
@@ -75,9 +90,12 @@
       "top_similarity": null
     },
     {
+      "actual_action": "EXECUTE",
       "actual_strategy": "GENERIC_RETRY",
       "case_id": "weak-success-control",
       "conflict": false,
+      "executable": true,
+      "expected_action": "EXECUTE",
       "expected_strategy": "GENERIC_RETRY",
       "family": "low_effectiveness_control",
       "memory_influenced": false,
@@ -88,9 +106,12 @@
       "top_similarity": null
     },
     {
+      "actual_action": "EXECUTE",
       "actual_strategy": "GENERIC_RETRY",
       "case_id": "irrelevant-memory-control",
       "conflict": false,
+      "executable": true,
+      "expected_action": "EXECUTE",
       "expected_strategy": "GENERIC_RETRY",
       "family": "irrelevant_control",
       "memory_influenced": false,
@@ -101,9 +122,12 @@
       "top_similarity": 0.357456292069649
     },
     {
+      "actual_action": "EXECUTE",
       "actual_strategy": "GENERIC_RETRY",
       "case_id": "cross-scope-control",
       "conflict": false,
+      "executable": true,
+      "expected_action": "EXECUTE",
       "expected_strategy": "GENERIC_RETRY",
       "family": "cross_scope_control",
       "memory_influenced": false,
@@ -114,10 +138,13 @@
       "top_similarity": null
     },
     {
-      "actual_strategy": "GENERIC_RETRY",
+      "actual_action": "ABSTAIN",
+      "actual_strategy": null,
       "case_id": "balanced-conflict-control",
       "conflict": true,
-      "expected_strategy": "GENERIC_RETRY",
+      "executable": false,
+      "expected_action": "ABSTAIN",
+      "expected_strategy": null,
       "family": "conflict_control",
       "memory_influenced": false,
       "passed": true,
@@ -130,9 +157,12 @@
       "top_similarity": 0.49921511053890466
     },
     {
+      "actual_action": "EXECUTE",
       "actual_strategy": "GENERIC_RETRY",
       "case_id": "stale-memory-control",
       "conflict": false,
+      "executable": true,
+      "expected_action": "EXECUTE",
       "expected_strategy": "GENERIC_RETRY",
       "family": "stale_control",
       "memory_influenced": false,
@@ -143,9 +173,12 @@
       "top_similarity": null
     },
     {
+      "actual_action": "EXECUTE",
       "actual_strategy": "REFRESH_PAYMENT_TOKEN",
       "case_id": "supersession-control",
       "conflict": false,
+      "executable": true,
+      "expected_action": "EXECUTE",
       "expected_strategy": "REFRESH_PAYMENT_TOKEN",
       "family": "supersession_control",
       "memory_influenced": true,
@@ -158,10 +191,13 @@
       "top_similarity": 0.5350443103898291
     },
     {
-      "actual_strategy": "GENERIC_RETRY",
+      "actual_action": "ABSTAIN",
+      "actual_strategy": null,
       "case_id": "duplicate-crowding-control",
       "conflict": true,
-      "expected_strategy": "GENERIC_RETRY",
+      "executable": false,
+      "expected_action": "ABSTAIN",
+      "expected_strategy": null,
       "family": "candidate_crowding_control",
       "memory_influenced": false,
       "passed": true,
@@ -174,10 +210,13 @@
       "top_similarity": 0.602410526014895
     },
     {
-      "actual_strategy": "GENERIC_RETRY",
+      "actual_action": "ABSTAIN",
+      "actual_strategy": null,
       "case_id": "distinct-head-conflict-crowding",
       "conflict": true,
-      "expected_strategy": "GENERIC_RETRY",
+      "executable": false,
+      "expected_action": "ABSTAIN",
+      "expected_strategy": null,
       "family": "candidate_crowding_control",
       "memory_influenced": false,
       "passed": true,
@@ -190,9 +229,12 @@
       "top_similarity": 0.5699559118644654
     },
     {
+      "actual_action": "EXECUTE",
       "actual_strategy": "REFRESH_PAYMENT_TOKEN",
       "case_id": "stale-revoked-crowding",
       "conflict": false,
+      "executable": true,
+      "expected_action": "EXECUTE",
       "expected_strategy": "REFRESH_PAYMENT_TOKEN",
       "family": "candidate_crowding_control",
       "memory_influenced": true,
@@ -208,6 +250,7 @@
   "cases_are_hand_authored": true,
   "embedding_dimensions": 1024,
   "embedding_model": "nvidia/nv-embedqa-e5-v5",
+  "embedding_space": "nvidia/nv-embedqa-e5-v5|dim=1024|contract=query-passage-v1",
   "storage": "decision_memory_heads.semantic_embedding VECTOR(1024)",
   "summary": {
     "benefit_cases": 4,

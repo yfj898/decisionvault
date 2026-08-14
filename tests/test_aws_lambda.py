@@ -4,7 +4,7 @@ import json
 
 import decisionvault.aws_lambda as aws_lambda
 from decisionvault.agent.auth import token_digest
-from decisionvault.domain import Decision, Strategy
+from decisionvault.domain import Decision, DecisionAction, Strategy
 from decisionvault.memory.cockroach import SupersessionWriteConflict
 
 
@@ -44,7 +44,20 @@ def _configure_executor(monkeypatch, *, token="executor-token"):
         "EXECUTION_RECEIPT_SECRET", "test-execution-receipt-secret-123"
     )
     monkeypatch.setattr(aws_lambda, "_enforce_rate_limit", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        aws_lambda,
+        "_build_agent",
+        lambda *, memory_enabled, agent_id="recovery-planner": _ExecutePolicyAgent(),
+    )
     return token
+
+
+class _ExecutePolicyAgent:
+    def decide(self, *, scope_id: str, situation: str) -> Decision:
+        return Decision(
+            strategy=Strategy.GENERIC_RETRY,
+            reason="test execution policy permits generic retry",
+        )
 
 
 def test_rate_limit_response_is_429_with_retry_after(monkeypatch):
@@ -157,7 +170,10 @@ def test_root_serves_judge_ui_without_embedding_demo_token(monkeypatch):
     assert "Memory ON" in response["body"]
     assert "Reproducible submission evidence" in response["body"]
     assert "semantic_embedding VECTOR(1024)" in response["body"]
-    assert "decision_memory_heads_scope_semantic_vec_idx" in response["body"]
+    assert "semantic_embedding_space" in response["body"]
+    assert "decision_memory_heads_scope_space_semantic_vec_idx" in response["body"]
+    assert "action=ABSTAIN" in response["body"]
+    assert "executable=false" in response["body"]
     assert "14/14" in response["body"]
     assert "do-not-embed-this" not in response["body"]
 
@@ -183,6 +199,8 @@ def test_decide_function_url_shape(monkeypatch):
     body = json.loads(response["body"])
     assert response["statusCode"] == 200
     assert body["strategy"] == "REFRESH_PAYMENT_TOKEN"
+    assert body["action"] == "EXECUTE"
+    assert body["executable"] is True
     assert body["memory_influenced"] is True
     assert body["model_provider"] == "nvidia:test"
     assert body["recalled_producer_agent_ids"] == ["recovery-observer"]
@@ -304,6 +322,70 @@ def test_execute_route_issues_server_signed_receipt(monkeypatch):
     assert receipt["outcome"] == "FAILED"
     assert receipt["effectiveness"] == 0.1
     assert receipt["signature"]
+    assert body["policy_decision"]["action"] == "EXECUTE"
+    assert body["policy_decision"]["executable"] is True
+
+
+def test_execute_route_blocks_abstained_decision(monkeypatch):
+    token = _configure_executor(monkeypatch)
+
+    class AbstainingAgent:
+        def decide(self, *, scope_id: str, situation: str) -> Decision:
+            return Decision(
+                strategy=None,
+                action=DecisionAction.ABSTAIN,
+                reason="shared memory conflict",
+                memory_resolution="CONFLICT_ABSTAIN",
+                memory_conflict=True,
+            )
+
+    monkeypatch.setattr(
+        aws_lambda,
+        "_build_agent",
+        lambda *, memory_enabled, agent_id="recovery-planner": AbstainingAgent(),
+    )
+    response = aws_lambda.lambda_handler(
+        {
+            "requestContext": {"http": {"method": "POST"}},
+            "rawPath": "/execute",
+            "headers": {"X-DecisionVault-Agent-Token": token},
+            "body": json.dumps(
+                {
+                    "scope_id": "demo",
+                    "situation": "conflicting payment recovery evidence",
+                    "strategy": "GENERIC_RETRY",
+                    "scenario": "stale_payment_token",
+                }
+            ),
+        },
+        None,
+    )
+    body = json.loads(response["body"])
+    assert response["statusCode"] == 409
+    assert body["error"] == "conflict"
+    assert "abstains" in body["detail"]
+
+
+def test_execute_route_rejects_strategy_not_committed_by_policy(monkeypatch):
+    token = _configure_executor(monkeypatch)
+    response = aws_lambda.lambda_handler(
+        {
+            "requestContext": {"http": {"method": "POST"}},
+            "rawPath": "/execute",
+            "headers": {"X-DecisionVault-Agent-Token": token},
+            "body": json.dumps(
+                {
+                    "scope_id": "demo",
+                    "situation": "payment retry",
+                    "strategy": "REFRESH_PAYMENT_TOKEN",
+                    "scenario": "stale_payment_token",
+                }
+            ),
+        },
+        None,
+    )
+    assert response["statusCode"] == 409
+    assert "does not match" in json.loads(response["body"])["detail"]
 
 
 def test_record_rejects_direct_outcome_fields(monkeypatch):
@@ -374,3 +456,111 @@ def test_record_returns_existing_episode_for_receipt_replay(monkeypatch):
     assert response["statusCode"] == 201
     assert body["episode_id"] == "episode-existing"
     assert body["idempotent_replay"] is True
+
+
+def test_revoke_route_requires_revoke_permission(monkeypatch):
+    token = _configure_agent(monkeypatch, permission="record")
+    monkeypatch.setattr(aws_lambda, "hydrate_runtime_secrets", lambda: None)
+    response = aws_lambda.lambda_handler(
+        {
+            "requestContext": {"http": {"method": "POST"}},
+            "rawPath": "/revoke",
+            "headers": {"X-DecisionVault-Agent-Token": token},
+            "body": json.dumps(
+                {
+                    "scope_id": "demo",
+                    "episode_id": "00000000-0000-0000-0000-000000000010",
+                    "reason": "invalid observation",
+                }
+            ),
+        },
+        None,
+    )
+    assert response["statusCode"] == 403
+
+
+def test_revoke_route_is_agent_bound_and_returns_audit_receipt(monkeypatch):
+    token = _configure_agent(monkeypatch, permission="revoke")
+    monkeypatch.setenv("REVOKE_AGENT_IDS", "recovery-planner")
+    monkeypatch.setattr(aws_lambda, "hydrate_runtime_secrets", lambda: None)
+    monkeypatch.setattr(
+        aws_lambda,
+        "_revoke",
+        lambda body, *, agent_id: {
+            "revocation_id": "00000000-0000-0000-0000-000000000011",
+            "episode_id": body["episode_id"],
+            "producer_agent_id": agent_id,
+            "revoked": True,
+            "idempotent_replay": False,
+        },
+    )
+    response = aws_lambda.lambda_handler(
+        {
+            "requestContext": {"http": {"method": "POST"}},
+            "rawPath": "/revoke",
+            "headers": {"X-DecisionVault-Agent-Token": token},
+            "body": json.dumps(
+                {
+                    "scope_id": "demo",
+                    "episode_id": "00000000-0000-0000-0000-000000000010",
+                    "reason": "invalid observation",
+                }
+            ),
+        },
+        None,
+    )
+    body = json.loads(response["body"])
+    assert response["statusCode"] == 200
+    assert body["revoked"] is True
+    assert body["producer_agent_id"] == "recovery-planner"
+
+
+def test_existing_record_grant_can_revoke_only_with_server_allowlist(monkeypatch):
+    token = _configure_agent(monkeypatch, permission="record")
+    monkeypatch.setenv("REVOKE_AGENT_IDS", "recovery-planner")
+    monkeypatch.setattr(aws_lambda, "hydrate_runtime_secrets", lambda: None)
+    monkeypatch.setattr(
+        aws_lambda,
+        "_revoke",
+        lambda body, *, agent_id: {
+            "revocation_id": "00000000-0000-0000-0000-000000000011",
+            "episode_id": body["episode_id"],
+            "producer_agent_id": agent_id,
+            "revoked": True,
+            "idempotent_replay": False,
+        },
+    )
+    response = aws_lambda.lambda_handler(
+        {
+            "requestContext": {"http": {"method": "POST"}},
+            "rawPath": "/revoke",
+            "headers": {"X-DecisionVault-Agent-Token": token},
+            "body": json.dumps(
+                {
+                    "scope_id": "demo",
+                    "episode_id": "00000000-0000-0000-0000-000000000010",
+                    "reason": "invalid observation",
+                }
+            ),
+        },
+        None,
+    )
+    assert response["statusCode"] == 200
+    assert json.loads(response["body"])["producer_agent_id"] == "recovery-planner"
+
+
+def test_revoke_validates_uuid_and_reason_before_store_call(monkeypatch):
+    class UnexpectedStore:
+        def revoke_current_head(self, **_kwargs):
+            raise AssertionError("store should not be called")
+
+    monkeypatch.setattr(aws_lambda, "_build_memory_store", lambda: UnexpectedStore())
+    try:
+        aws_lambda._revoke(
+            {"scope_id": "demo", "episode_id": "not-a-uuid", "reason": "bad"},
+            agent_id="agent-a",
+        )
+    except ValueError as exc:
+        assert "valid UUID" in str(exc)
+    else:
+        raise AssertionError("invalid revoke UUID should fail")

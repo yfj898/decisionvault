@@ -68,6 +68,7 @@ def main() -> int:
         embedder=deterministic_text_embedding,
         semantic_embedder=semantic.embed_passage,
         semantic_query_embedder=semantic.embed_query,
+        semantic_embedding_space=semantic.embedding_space,
     )
     policy = OutcomeAwarePolicy(
         resolver=ConflictAwareMemoryResolver(
@@ -111,6 +112,7 @@ def main() -> int:
             off = policy.decide(recalled=[])
             matches = (
                 decision.strategy == case.expected_strategy
+                and decision.action == case.expected_action
                 and decision.memory_influenced == case.expected_influenced
                 and (case.expected_resolution is None or decision.memory_resolution == case.expected_resolution)
                 and (case.expected_conflict is None or decision.memory_conflict == case.expected_conflict)
@@ -125,8 +127,17 @@ def main() -> int:
                 {
                     "case_id": case.case_id,
                     "family": case.family,
-                    "expected_strategy": case.expected_strategy.value,
-                    "actual_strategy": decision.strategy.value,
+                    "expected_strategy": (
+                        case.expected_strategy.value
+                        if case.expected_strategy is not None
+                        else None
+                    ),
+                    "expected_action": case.expected_action.value,
+                    "actual_strategy": (
+                        decision.strategy.value if decision.strategy is not None else None
+                    ),
+                    "actual_action": decision.action.value,
+                    "executable": decision.executable,
                     "memory_influenced": decision.memory_influenced,
                     "resolution": decision.memory_resolution,
                     "conflict": decision.memory_conflict,
@@ -137,7 +148,9 @@ def main() -> int:
                 }
             )
             print(
-                f"{case.case_id}: strategy={decision.strategy.value} "
+                f"{case.case_id}: strategy="
+                f"{decision.strategy.value if decision.strategy is not None else 'NONE'} "
+                f"action={decision.action.value} "
                 f"influenced={decision.memory_influenced} "
                 f"resolution={decision.memory_resolution} "
                 f"top_similarity={recalled[0].similarity:.4f} "
@@ -161,6 +174,7 @@ def main() -> int:
         payload = {
             "benchmark": "decisionvault-production-semantic-conformance",
             "embedding_model": semantic.model_id,
+            "embedding_space": semantic.embedding_space,
             "embedding_dimensions": semantic.expected_dimensions,
             "storage": "decision_memory_heads.semantic_embedding VECTOR(1024)",
             "cases_are_hand_authored": True,

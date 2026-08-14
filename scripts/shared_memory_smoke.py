@@ -145,6 +145,7 @@ def main() -> int:
             embedder=deterministic_text_embedding,
             semantic_embedder=semantic.embed_passage,
             semantic_query_embedder=semantic.embed_query,
+            semantic_embedding_space=semantic.embedding_space,
         )
         similar_case = SEMANTIC_PARAPHRASE_CASE
     else:

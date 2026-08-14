@@ -63,8 +63,12 @@ evidence is recorded in `docs/evidence/PHASE3_DISTRIBUTED_VECTOR_INDEX.md`.
 The current production semantic index is:
 
 ```sql
-CREATE VECTOR INDEX decision_memory_heads_scope_semantic_vec_idx
-ON decision_memory_heads (scope_id, semantic_embedding vector_cosine_ops);
+CREATE VECTOR INDEX decision_memory_heads_scope_space_semantic_vec_idx
+ON decision_memory_heads (
+  scope_id,
+  semantic_embedding_space,
+  semantic_embedding vector_cosine_ops
+);
 ```
 
 `decision_memory_heads` contains one current row per

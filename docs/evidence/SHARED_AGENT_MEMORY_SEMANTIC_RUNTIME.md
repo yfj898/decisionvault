@@ -55,7 +55,7 @@ neighbor ordering, so the hosted path was migrated to the provider's native
 
 ```text
 decision_memory_heads.semantic_embedding VECTOR(1024)
-decision_memory_heads_scope_semantic_vec_idx
+decision_memory_heads_scope_space_semantic_vec_idx
 ```
 
 The original `decision_episodes.embedding VECTOR(64)` and its DVI remain only as

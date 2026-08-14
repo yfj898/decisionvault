@@ -159,6 +159,7 @@ class MemoryAuditorAgent:
         scope_id: str,
         situation: str,
         semantic_query_vector: list[float] | None = None,
+        semantic_embedding_space: str | None = None,
     ) -> MemoryAuditResult:
         init = self.client.initialize()
         init_text = _response_text(init)
@@ -174,6 +175,16 @@ class MemoryAuditorAgent:
 
         scope_literal = _sql_literal(scope_id)
         semantic_mode = semantic_query_vector is not None
+        if semantic_mode and not (semantic_embedding_space or "").strip():
+            raise ValueError(
+                "semantic_embedding_space is required for semantic MCP audit"
+            )
+        space_clause = (
+            " AND semantic_embedding_space = "
+            + _sql_literal(str(semantic_embedding_space))
+            if semantic_mode
+            else ""
+        )
         select_payload = self.client.call_tool(
             "select_query",
             {
@@ -182,7 +193,8 @@ class MemoryAuditorAgent:
                     "SELECT scope_id, strategy, outcome, effectiveness, confidence, "
                     "evidence->>'producer_agent_id' AS producer_agent_id "
                     f"FROM {'decision_memory_heads' if semantic_mode else 'decision_episodes'} "
-                    f"WHERE scope_id = {scope_literal} ORDER BY created_at DESC LIMIT 5"
+                    f"WHERE scope_id = {scope_literal}{space_clause} "
+                    "ORDER BY created_at DESC LIMIT 5"
                 ),
             },
         )
@@ -198,7 +210,7 @@ class MemoryAuditorAgent:
         table = "decision_memory_heads" if semantic_mode else "decision_episodes"
         column = "semantic_embedding" if semantic_mode else "embedding"
         index_name = (
-            "decision_memory_heads_scope_semantic_vec_idx"
+            "decision_memory_heads_scope_space_semantic_vec_idx"
             if semantic_mode
             else "decision_episodes_scope_embedding_vec_idx"
         )
@@ -208,7 +220,7 @@ class MemoryAuditorAgent:
                 "database": self.database,
                 "query": (
                     f"SELECT episode_id FROM {table} "
-                    f"WHERE scope_id = {scope_literal} "
+                    f"WHERE scope_id = {scope_literal}{space_clause} "
                     f"ORDER BY {column} <=> '{vector}'::VECTOR LIMIT 5"
                 ),
             },

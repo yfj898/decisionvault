@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from decisionvault.domain import DecisionEpisode, Outcome, Strategy
+from decisionvault.domain import DecisionAction, DecisionEpisode, Outcome, Strategy
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,8 +26,9 @@ class SemanticCase:
     family: str
     query: str
     seeds: tuple[SemanticSeed, ...]
-    expected_strategy: Strategy
+    expected_strategy: Strategy | None
     expected_influenced: bool
+    expected_action: DecisionAction = DecisionAction.EXECUTE
     expected_resolution: str | None = None
     expected_conflict: bool | None = None
     expected_producer: str | None = None
@@ -272,8 +273,9 @@ def production_semantic_cases() -> tuple[SemanticCase, ...]:
                     effectiveness=0.1,
                 ),
             ),
-            expected_strategy=Strategy.GENERIC_RETRY,
+            expected_strategy=None,
             expected_influenced=False,
+            expected_action=DecisionAction.ABSTAIN,
             expected_resolution="CONFLICT_ABSTAIN",
             expected_conflict=True,
         ),
@@ -367,8 +369,9 @@ def production_semantic_cases() -> tuple[SemanticCase, ...]:
                     )
                 ]
             ),
-            expected_strategy=Strategy.GENERIC_RETRY,
+            expected_strategy=None,
             expected_influenced=False,
+            expected_action=DecisionAction.ABSTAIN,
             expected_resolution="CONFLICT_ABSTAIN",
             expected_conflict=True,
         ),
@@ -417,8 +420,9 @@ def production_semantic_cases() -> tuple[SemanticCase, ...]:
                     ),
                 ]
             ),
-            expected_strategy=Strategy.GENERIC_RETRY,
+            expected_strategy=None,
             expected_influenced=False,
+            expected_action=DecisionAction.ABSTAIN,
             expected_resolution="CONFLICT_ABSTAIN",
             expected_conflict=True,
         ),

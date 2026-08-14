@@ -27,6 +27,7 @@ def main() -> int:
         )
 
     semantic_query_vector = None
+    semantic_embedding_space = None
     if args.semantic:
         nvidia_key = os.getenv("NVIDIA_API_KEY", "").strip()
         if not nvidia_key:
@@ -41,6 +42,7 @@ def main() -> int:
             ),
         )
         semantic_query_vector = semantic.embed_query(args.situation)
+        semantic_embedding_space = semantic.embedding_space
 
     result = MemoryAuditorAgent(
         ManagedMcpClient(cluster_id=cluster_id, bearer_token=token),
@@ -49,6 +51,7 @@ def main() -> int:
         scope_id=args.scope_id,
         situation=args.situation,
         semantic_query_vector=semantic_query_vector,
+        semantic_embedding_space=semantic_embedding_space,
     )
     print(f"server_initialized={result.server_initialized}")
     print(f"required_tools_present={result.required_tools_present}")

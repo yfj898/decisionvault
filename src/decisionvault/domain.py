@@ -18,6 +18,11 @@ class Outcome(StrEnum):
     UNKNOWN = "UNKNOWN"
 
 
+class DecisionAction(StrEnum):
+    EXECUTE = "EXECUTE"
+    ABSTAIN = "ABSTAIN"
+
+
 @dataclass(frozen=True, slots=True)
 class DecisionEpisode:
     episode_id: str
@@ -57,8 +62,9 @@ class RecalledEpisode:
 
 @dataclass(frozen=True, slots=True)
 class Decision:
-    strategy: Strategy
+    strategy: Strategy | None
     reason: str
+    action: DecisionAction = DecisionAction.EXECUTE
     recalled_episode_ids: tuple[str, ...] = ()
     recalled_producer_agent_ids: tuple[str, ...] = ()
     memory_influenced: bool = False
@@ -66,3 +72,7 @@ class Decision:
     memory_conflict: bool = False
     model_explanation: str | None = None
     model_provider: str | None = None
+
+    @property
+    def executable(self) -> bool:
+        return self.action == DecisionAction.EXECUTE and self.strategy is not None

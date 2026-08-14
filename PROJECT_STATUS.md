@@ -15,12 +15,22 @@ Baseline:
 8 tests PASS
 
 Current local verification:
-85 tests PASS
+101 tests PASS
 Multi-agent follow-up hardening: PASS (pre-governance candidate filtering / atomic supersession / governed-only advisor evidence)
 6+ distinct-head adversarial governance regression: PASS
 Stale/revoked crowding regression: PASS
 Cloud supersession-vs-normal-write stale correction rejection: PASS
 Advisor governed-evidence-only regression: PASS
+First-class conflict abstention (`strategy=null`, `action=ABSTAIN`, `executable=false`): PASS
+Execution gateway policy re-check / abstention block: PASS
+Authenticated producer-bound `/revoke` contract: PASS
+CockroachDB revocation audit + idempotent replay Cloud proof: PASS
+Namespace-bound scope-prefix authorization (no raw `startswith`): PASS
+Wildcard scope grants / duplicate agent identities rejected: PASS
+Semantic embedding-space schema migration: PASS
+Cross-embedding-space recall fails closed: PASS
+CAS-safe semantic re-embedding migration utility: PASS
+Real Cloud legacy-space → current-space re-embed proof: PASS
 Phase 9 single-page DVI / MCP / benchmark evidence UI: PASS
 Phase 9 1920×1080 real-click recording automation: READY
 Phase 9 hosted evidence panel deployment: PASS
@@ -91,7 +101,7 @@ NVIDIA `nv-embedqa-e5-v5` live embedding call: PASS (1024D)
 Production semantic embedding `passage` / `query` separation: PASS
 Hosted semantic retrieval uses native `VECTOR(1024)`: PASS
 Legacy 1024D → 64D projection removed from hosted path: PASS
-Production semantic DVI `decision_memory_heads_scope_semantic_vec_idx`: PASS
+Production semantic DVI `decision_memory_heads_scope_space_semantic_vec_idx`: PASS
 Production semantic hand-authored benchmark: 14/14 PASS
 Production semantic benefit/control relevance gate calibrated to 0.40: PASS
 Semantic paraphrase Cloud recall similarity: 0.4541
@@ -126,6 +136,12 @@ Post-governance Phase 8 deterministic Cloud regression: 28/28 PASS
 Protected `/governance-demo` deployed on AWS Lambda: PASS
 Hosted contradictory memories → `CONFLICT_ABSTAIN`: PASS
 Hosted governance `memory_conflict=True`: PASS
+Hosted governance `strategy=null / action=ABSTAIN / executable=false`: PASS
+Hosted `/execute` while conflict abstention active: HTTP 409 / no receipt
+Hosted `/revoke` current-head removal: HTTP 200 / PASS
+Hosted `/revoke` replay: idempotent / same revocation ID
+Hosted planner after revoke: `GENERIC_RETRY / NO_SIGNAL`: PASS
+Space-aware DVI EXPLAIN uses `decision_memory_heads_scope_space_semantic_vec_idx`: PASS
 Unauthorized `/governance-demo`: HTTP 401
 Hosted governance temporary rows cleanup: 0 rows
 Hosted governance desktop Chrome DOM smoke: PASS

@@ -42,7 +42,7 @@ decision_memory_heads.semantic_embedding VECTOR(1024) # production candidates
 Production DVI:
 
 ```text
-decision_memory_heads_scope_semantic_vec_idx
+decision_memory_heads_scope_space_semantic_vec_idx
 ```
 
 The old projection helper remains only as historical test code and is not wired
@@ -66,13 +66,16 @@ strategy = REFRESH_PAYMENT_TOKEN
 memory_conflict = false
 ```
 
-When all six items were supplied to the resolver, the correct result was:
+At that remediation stage, supplying all six items exposed the hidden conflict:
 
 ```text
-GENERIC_RETRY
-CONFLICT_ABSTAIN
+resolution = CONFLICT_ABSTAIN
 memory_conflict = true
 ```
+
+The later governance-v2 hardening promoted that resolution to a first-class
+non-executable decision: `strategy=null`, `action=ABSTAIN`, and
+`executable=false`.
 
 ### Remediation
 
@@ -99,11 +102,38 @@ Live CockroachDB Cloud adversarial verification:
 history episodes = 6
 governed heads = 2
 distinct producers = 2
-strategy = GENERIC_RETRY
+strategy = null
+action = ABSTAIN
+executable = false
 resolution = CONFLICT_ABSTAIN
 memory_conflict = true
 candidate_crowding_regression = PASS
 ```
+
+## Governance-v2 follow-up
+
+The final multi-agent hardening pass closed four additional boundaries:
+
+```text
+first-class conflict abstention                 PASS
+hosted /execute blocks active abstention        HTTP 409 / no receipt
+producer-bound hosted /revoke                   PASS
+revoke replay                                   idempotent / same audit ID
+namespace-bounded scope authorization           PASS
+semantic_embedding_space isolation              PASS
+legacy-space head under current query space     0 recalled
+CAS-safe re-embedding migration                 PASS
+space-aware DVI EXPLAIN                         vector search / index visible
+native semantic conformance                     14 / 14 PASS
+repository unit/integration suite               101 / 101 PASS
+```
+
+The restricted Lambda deployer intentionally has no Secrets Manager write
+permission. Revocation therefore keeps opaque token grants inside Secrets
+Manager and adds a second non-secret Lambda allowlist (`REVOKE_AGENT_IDS`) keyed
+only by the already server-bound agent identity. The deployed observer must pass
+both the token/scope capability check and this allowlist before `/revoke` can
+mutate a governed head.
 
 ## 3. Caller-controlled producer identity
 
@@ -240,7 +270,7 @@ Final result:
 native 1024D production semantic benchmark = 14 / 14 PASS
 local deterministic regression             = 56 / 56 PASS
 CockroachDB deterministic regression        = 28 / 28 PASS
-repository unit/contract suite              = 85 / 85 PASS
+repository unit/contract suite              = 101 / 101 PASS
 ```
 
 The semantic suite is a controlled retrieval/governance conformance benchmark,

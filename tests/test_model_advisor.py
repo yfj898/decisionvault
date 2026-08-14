@@ -32,6 +32,17 @@ class CapturingAdvisor:
         return "The explanation only sees evidence admitted by memory governance."
 
 
+class CountingAdvisor:
+    provider_name = "test:counting"
+
+    def __init__(self):
+        self.calls = 0
+
+    def explain(self, **kwargs) -> str:
+        self.calls += 1
+        return "This must not run for a non-executable abstention."
+
+
 def _seed_failed_generic(store: InMemoryEpisodeStore, scope_id: str) -> None:
     seed_agent = DecisionAgent(memory=store)
     situation = "payment failed after card replacement and token may be stale"
@@ -108,3 +119,34 @@ def test_advisor_only_receives_governed_memory_evidence():
     assert decision.memory_influenced is False
     assert decision.recalled_episode_ids == ()
     assert advisor.recalled_ids == ()
+
+
+def test_advisor_is_not_invoked_for_conflict_abstention():
+    store = InMemoryEpisodeStore()
+    situation = "replacement card payment token recovery"
+    for agent_id, outcome, effectiveness in (
+        ("observer-success", Outcome.SUCCESS, 0.9),
+        ("observer-failure", Outcome.FAILED, 0.1),
+    ):
+        producer = DecisionAgent(memory=store, agent_id=agent_id)
+        producer.record_outcome(
+            scope_id="scope-conflict",
+            situation=situation,
+            decision=Decision(
+                strategy=Strategy.REFRESH_PAYMENT_TOKEN,
+                reason="conflict seed",
+            ),
+            outcome=outcome,
+            effectiveness=effectiveness,
+        )
+
+    advisor = CountingAdvisor()
+    decision = DecisionAgent(memory=store, advisor=advisor).decide(
+        scope_id="scope-conflict",
+        situation=situation,
+    )
+
+    assert decision.strategy is None
+    assert decision.executable is False
+    assert decision.memory_resolution == "CONFLICT_ABSTAIN"
+    assert advisor.calls == 0

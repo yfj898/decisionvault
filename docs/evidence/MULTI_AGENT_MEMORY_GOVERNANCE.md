@@ -43,9 +43,22 @@ decision:
 7. producer identity/scope/permission/trust comes from a server-side token grant,
    never from a caller-supplied `agent_id`; unknown producers receive a
    conservative trust default when a trust registry is active;
-8. a close contradiction returns `CONFLICT_ABSTAIN` and the policy falls back to
-   `GENERIC_RETRY`;
-9. when trust or stronger evidence resolves the winner, `memory_conflict` remains
+8. a close contradiction returns `CONFLICT_ABSTAIN` with `strategy=null`,
+   `action=ABSTAIN`, and `executable=false` rather than exposing an executable
+   fallback strategy;
+9. the `/execute` gateway re-runs the current deterministic policy and refuses
+   to sign an execution receipt if the current action is `ABSTAIN` or the caller
+   asks to execute a strategy other than the policy-committed strategy;
+10. authenticated `/revoke` requires a token-bound producer capability plus a
+   second server-controlled `REVOKE_AGENT_IDS` allowlist. New grants may carry
+   the distinct `revoke` capability directly; the existing hosted observer uses
+   its `record` capability only because its bound `agent_id` is independently
+   allowlisted. The transaction removes only that producer's current governed
+   head while appending a `decision_memory_revocations` audit event;
+11. semantic candidates are labeled with `semantic_embedding_space` (model,
+   dimensions, and query/passage contract) and recall filters by that space
+   before vector ranking;
+12. when trust or stronger evidence resolves the winner, `memory_conflict` remains
    true so the disagreement is still visible to the caller.
 
 ## Local adversarial contract
@@ -59,13 +72,16 @@ trusted producer vs lower-trust contradiction       → resolve, conflict visibl
 explicit supersession                               → obsolete episode removed
 same-producer repeated writes                       → no vote amplification
 two equally strong successful strategies            → abstain
-policy output                                       → safe default + conflict metadata
+policy output                                       → strategy=None / action=ABSTAIN
+execution attempt while abstained                    → blocked before receipt signing
+producer-bound current-head revoke                  → audited + idempotent
+cross-embedding-space candidate                     → not recalled
 ```
 
 After the governance implementation, the full repository test suite is:
 
 ```text
-85 passed
+101 passed
 ```
 
 ## Real CockroachDB Cloud + semantic embedding smoke
@@ -78,7 +94,9 @@ embedding path as the hosted application. Immutable source episodes remained in
 Observed output:
 
 ```text
-balanced_conflict_strategy=GENERIC_RETRY
+balanced_conflict_strategy=NONE
+balanced_conflict_action=ABSTAIN
+balanced_conflict_executable=False
 balanced_conflict_influenced=False
 balanced_conflict_resolution=CONFLICT_ABSTAIN
 
@@ -91,7 +109,8 @@ stale_resolution=NO_SIGNAL
 supersession_strategy=REFRESH_PAYMENT_TOKEN
 supersession_old_recalled=False
 
-duplicate_vote_strategy=GENERIC_RETRY
+duplicate_vote_strategy=NONE
+duplicate_vote_action=ABSTAIN
 duplicate_vote_conflict=True
 
 multi_agent_governance_smoke=PASS
@@ -166,9 +185,49 @@ contradiction, and stale/revoked candidate crowding ahead of fresh admissible
 evidence. The complete real Cloud + native-1024D suite passes `14/14`, and all
 temporary benchmark rows are cleaned afterward.
 
+## Revocation path
+
+`POST /revoke` is separate from correction/supersession. Authorization is
+double-bound: the request must authenticate as a producer with an applicable
+record/revoke capability and that server-bound `agent_id` must be present in
+`REVOKE_AGENT_IDS`. This allowed the production deployer to enable revocation by
+agent ID without copying opaque tokens out of Secrets Manager. The request then
+supplies `scope_id`, a UUID `episode_id`, and an audit reason. The CockroachDB transaction first checks
+for an existing revocation (making retries idempotent), then conditionally
+deletes the current head by `(scope_id, producer_agent_id, episode_id)` and
+inserts an append-only `decision_memory_revocations` row. The immutable source
+episode is not rewritten or deleted.
+
+Real CockroachDB Cloud verification:
+
+```text
+revoke_before_recall             1
+revoke_after_recall              0
+first revoke idempotent          false
+replayed revoke idempotent       true
+replayed revocation ID identical true
+cloud_revoke_contract            PASS
+```
+
+## Embedding-space migration boundary
+
+Production semantic rows now carry:
+
+```text
+nvidia/nv-embedqa-e5-v5|dim=1024|contract=query-passage-v1
+```
+
+The DVI is `decision_memory_heads_scope_space_semantic_vec_idx` with
+`scope_id` and `semantic_embedding_space` as prefix columns. An intentionally
+re-labeled legacy-space head with a perfect semantic vector produced zero recall
+under the current runtime. `scripts/migrate_semantic_embedding_space.py` then
+re-embedded that current head into the configured space and recall returned one
+candidate again. The migration uses an episode-ID/current-head CAS so a
+concurrent replacement is skipped rather than overwritten.
+
 ## Trust boundary
 
-General `/record` and `/decide` callers authenticate with opaque per-agent tokens.
+General `/record`, `/decide`, `/execute`, and `/revoke` callers authenticate with opaque per-agent tokens.
 Only SHA-256 token digests are stored in Lambda configuration via
 `AGENT_AUTH_JSON`; each grant binds an agent identity, allowed scope prefixes,
 permissions, and trust. A caller that sends `agent_id` in the request body is
@@ -179,7 +238,10 @@ that contradictory qualified evidence exists.
 
 The memory adapter enforces exact `scope_id` filtering, while the general agent
 API independently checks whether the authenticated agent token grants access to
-the requested scope prefix and permission. Live verification showed: a judge demo
+the requested namespace boundary and permission. Prefix matching is no longer a
+raw `startswith`: a grant for `team-a` allows `team-a`, `team-a/demo`, or
+`team-a-demo`, but not `team-admin`. Wildcards and duplicate agent identities are
+rejected while loading grants. Live verification showed: a judge demo
 token is rejected on `/decide`, a caller-supplied `agent_id` is rejected, and a
 valid planner token is rejected outside its granted scope. The two atomic judge
 demo routes intentionally keep a separate hackathon demo token. This is still a
@@ -196,7 +258,9 @@ Observed hosted result:
 
 ```text
 governance_demo_http=200
-governance_strategy=GENERIC_RETRY
+governance_strategy=null
+governance_action=ABSTAIN
+governance_executable=false
 governance_influenced=False
 governance_resolution=CONFLICT_ABSTAIN
 governance_conflict=True

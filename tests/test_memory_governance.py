@@ -4,7 +4,13 @@ from datetime import datetime, timedelta, timezone
 
 from decisionvault.agent.memory_governance import ConflictAwareMemoryResolver
 from decisionvault.agent.policy import OutcomeAwarePolicy
-from decisionvault.domain import DecisionEpisode, Outcome, RecalledEpisode, Strategy
+from decisionvault.domain import (
+    DecisionAction,
+    DecisionEpisode,
+    Outcome,
+    RecalledEpisode,
+    Strategy,
+)
 
 
 NOW = datetime(2026, 8, 14, 1, 0, tzinfo=timezone.utc)
@@ -191,7 +197,7 @@ def test_competing_successful_strategies_abstain_when_evidence_is_tied():
     assert result.conflict is True
 
 
-def test_policy_surfaces_conflict_abstention_as_safe_default():
+def test_policy_surfaces_conflict_as_non_executable_abstention():
     policy = OutcomeAwarePolicy(resolver=ConflictAwareMemoryResolver())
     decision = policy.decide(
         recalled=[
@@ -211,7 +217,9 @@ def test_policy_surfaces_conflict_abstention_as_safe_default():
             ),
         ]
     )
-    assert decision.strategy == Strategy.GENERIC_RETRY
+    assert decision.strategy is None
+    assert decision.action == DecisionAction.ABSTAIN
+    assert decision.executable is False
     assert decision.memory_influenced is False
     assert decision.memory_conflict is True
 

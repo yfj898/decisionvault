@@ -10,6 +10,24 @@ from urllib.request import Request, urlopen
 
 DEFAULT_EMBEDDING_DIMENSIONS = 64
 NVIDIA_EMBEDDING_DIMENSIONS = 1024
+SEMANTIC_EMBEDDING_CONTRACT_VERSION = "query-passage-v1"
+
+
+def semantic_embedding_space(
+    model_id: str,
+    *,
+    dimensions: int = NVIDIA_EMBEDDING_DIMENSIONS,
+    contract_version: str = SEMANTIC_EMBEDDING_CONTRACT_VERSION,
+) -> str:
+    normalized_model = model_id.strip()
+    if not normalized_model:
+        raise ValueError("semantic embedding model_id is required")
+    if dimensions <= 0:
+        raise ValueError("semantic embedding dimensions must be positive")
+    normalized_contract = contract_version.strip()
+    if not normalized_contract:
+        raise ValueError("semantic embedding contract version is required")
+    return f"{normalized_model}|dim={dimensions}|contract={normalized_contract}"
 
 
 def deterministic_text_embedding(
@@ -74,6 +92,13 @@ class NvidiaSemanticEmbedder:
     model_id: str = "nvidia/nv-embedqa-e5-v5"
     timeout_seconds: float = 20.0
     expected_dimensions: int = NVIDIA_EMBEDDING_DIMENSIONS
+
+    @property
+    def embedding_space(self) -> str:
+        return semantic_embedding_space(
+            self.model_id,
+            dimensions=self.expected_dimensions,
+        )
 
     def _embed(self, text: str, *, input_type: str) -> list[float]:
         body = json.dumps(

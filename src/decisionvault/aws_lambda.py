@@ -14,19 +14,21 @@ from decisionvault.agent.memory_governance import (
     ConflictAwareMemoryResolver,
 )
 from decisionvault.agent.policy import OutcomeAwarePolicy
-from decisionvault.domain import Decision, Outcome, Strategy
+from decisionvault.domain import Decision, DecisionAction, Outcome, Strategy
 from decisionvault.execution import (
     issue_sandbox_receipt,
     verify_execution_receipt,
 )
 from decisionvault.memory.cockroach import (
     CockroachVectorMemoryStore,
+    MemoryRevocationConflict,
     SupersessionWriteConflict,
 )
 from decisionvault.memory.connection import psycopg_connection_factory
 from decisionvault.memory.embedding import (
     NvidiaSemanticEmbedder,
     deterministic_text_embedding,
+    semantic_embedding_space,
 )
 from decisionvault.observability import emit_request_metric
 from decisionvault.providers.nvidia import NvidiaDecisionAdvisor
@@ -68,6 +70,10 @@ class RateLimitExceeded(Exception):
     def __init__(self, retry_after_seconds: int) -> None:
         super().__init__("rate limit exceeded")
         self.retry_after_seconds = retry_after_seconds
+
+
+class ExecutionPolicyConflict(Exception):
+    """Execution is blocked because the current deterministic decision disagrees."""
 
 
 def _json_response(
@@ -149,6 +155,44 @@ def _authenticate_request_agent(
     )
 
 
+def _revoke_agent_ids() -> frozenset[str]:
+    return frozenset(
+        item.strip()
+        for item in os.getenv("REVOKE_AGENT_IDS", "").split(",")
+        if item.strip()
+    )
+
+
+def _authenticate_revoke_agent(
+    event: dict[str, Any],
+    *,
+    scope_id: str,
+) -> AgentGrant | None:
+    grants = _agent_grants()
+    token = _agent_token(event)
+    grant = authenticate_agent(
+        token=token,
+        grants=grants,
+        permission="revoke",
+        scope_id=scope_id,
+    )
+    if grant is None:
+        # Compatibility bridge for already-deployed grants: a record-capable
+        # identity may revoke only when that server-bound agent_id is also
+        # explicitly opted into the non-secret Lambda allowlist. New grant
+        # generations may carry the distinct `revoke` permission directly, but
+        # the allowlist remains a second server-side authorization boundary.
+        grant = authenticate_agent(
+            token=token,
+            grants=grants,
+            permission="record",
+            scope_id=scope_id,
+        )
+    if grant is None or grant.agent_id not in _revoke_agent_ids():
+        return None
+    return grant
+
+
 def _producer_trust_registry() -> dict[str, float]:
     registry = {
         grant.agent_id: grant.trust
@@ -173,11 +217,7 @@ def _execution_secret() -> str:
     return secret
 
 
-def _build_agent(
-    *,
-    memory_enabled: bool,
-    agent_id: str = "recovery-planner",
-) -> DecisionAgent:
+def _build_memory_store() -> CockroachVectorMemoryStore:
     nvidia_key = os.getenv("NVIDIA_API_KEY", "").strip()
     if nvidia_key:
         semantic = NvidiaSemanticEmbedder(
@@ -195,12 +235,23 @@ def _build_agent(
             embedder=deterministic_text_embedding,
             semantic_embedder=semantic.embed_passage,
             semantic_query_embedder=semantic.embed_query,
+            semantic_embedding_space=semantic.embedding_space,
         )
     else:
         store = CockroachVectorMemoryStore(
             connection_factory=psycopg_connection_factory(),
             embedder=deterministic_text_embedding,
         )
+    return store
+
+
+def _build_agent(
+    *,
+    memory_enabled: bool,
+    agent_id: str = "recovery-planner",
+) -> DecisionAgent:
+    nvidia_key = os.getenv("NVIDIA_API_KEY", "").strip()
+    store = _build_memory_store()
     advisor = None
     if nvidia_key:
         advisor = NvidiaDecisionAdvisor(
@@ -246,6 +297,9 @@ def _delete_scope(scope_id: str) -> None:
 
 def _health() -> dict[str, Any]:
     managed_secret = bool(os.getenv("DECISIONVAULT_SECRET_ARN", "").strip())
+    configured_embedding_space = semantic_embedding_space(
+        os.getenv("NVIDIA_EMBED_MODEL_ID", "nvidia/nv-embedqa-e5-v5")
+    )
     return {
         "service": "decisionvault",
         "status": "ok",
@@ -255,6 +309,7 @@ def _health() -> dict[str, Any]:
         or bool(os.getenv("NVIDIA_API_KEY")),
         "semantic_embedding_configured": managed_secret
         or bool(os.getenv("NVIDIA_API_KEY")),
+        "semantic_embedding_space": configured_embedding_space,
         "execution_receipt_signing_configured": managed_secret
         or bool(os.getenv("EXECUTION_RECEIPT_SECRET", "").strip()),
         "runtime_secret_source": (
@@ -274,6 +329,8 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
     secret_ok = False
     database_ok = False
     semantic_embedding_ok = False
+    governance_schema_ok = False
+    configured_embedding_space: str | None = None
     errors: list[str] = []
 
     try:
@@ -289,6 +346,14 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
                 with conn.cursor() as cur:
                     cur.execute("SELECT 1")
                     database_ok = cur.fetchone()[0] == 1
+                    cur.execute(
+                        "SELECT semantic_embedding_space "
+                        "FROM decision_memory_heads LIMIT 0"
+                    )
+                    cur.execute(
+                        "SELECT revocation_id FROM decision_memory_revocations LIMIT 0"
+                    )
+                    governance_schema_ok = True
             finally:
                 conn.close()
         except Exception as exc:
@@ -310,10 +375,11 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
             semantic_embedding_ok = (
                 len(semantic.embed_query("DecisionVault readiness probe")) == 1024
             )
+            configured_embedding_space = semantic.embedding_space
         except Exception as exc:
             errors.append(f"semantic_embedding:{type(exc).__name__}")
 
-    ready = secret_ok and database_ok and semantic_embedding_ok
+    ready = secret_ok and database_ok and governance_schema_ok and semantic_embedding_ok
     return (
         200 if ready else 503,
         {
@@ -321,7 +387,9 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
             "status": "ready" if ready else "not_ready",
             "secrets_manager": secret_ok,
             "database": database_ok,
+            "memory_governance_schema": governance_schema_ok,
             "semantic_embedding": semantic_embedding_ok,
+            "semantic_embedding_space": configured_embedding_space,
             "advisor_required_for_readiness": False,
             "errors": errors,
         },
@@ -360,6 +428,18 @@ def _execute(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
     if not scope_id or not situation or not scenario:
         raise ValueError("scope_id, situation, and scenario are required")
     strategy = Strategy(str(body.get("strategy", "")))
+    current_decision = _build_agent(
+        memory_enabled=True,
+        agent_id=agent_id,
+    ).decide(scope_id=scope_id, situation=situation)
+    if not current_decision.executable or current_decision.strategy is None:
+        raise ExecutionPolicyConflict(
+            "current deterministic decision abstains; execution is blocked"
+        )
+    if current_decision.strategy != strategy:
+        raise ExecutionPolicyConflict(
+            "requested strategy does not match the current deterministic decision"
+        )
     receipt = issue_sandbox_receipt(
         scope_id=scope_id,
         agent_id=agent_id,
@@ -370,6 +450,7 @@ def _execute(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
     )
     return {
         "execution_receipt": receipt,
+        "policy_decision": _decision_payload(current_decision),
         "verified_outcome_source": "decisionvault-payment-recovery-sandbox",
     }
 
@@ -451,7 +532,9 @@ def _validate_supersession(
 
 def _decision_payload(decision: Decision) -> dict[str, Any]:
     return {
-        "strategy": decision.strategy.value,
+        "strategy": decision.strategy.value if decision.strategy is not None else None,
+        "action": decision.action.value,
+        "executable": decision.executable,
         "reason": decision.reason,
         "memory_influenced": decision.memory_influenced,
         "recalled_episode_ids": list(decision.recalled_episode_ids),
@@ -555,7 +638,9 @@ def _governance_demo() -> dict[str, Any]:
             "producer_agent_ids": [producer_a, producer_b],
             "consumer_agent_id": consumer,
             "expected_abstention": (
-                decision.strategy == Strategy.GENERIC_RETRY
+                decision.strategy is None
+                and decision.action == DecisionAction.ABSTAIN
+                and not decision.executable
                 and not decision.memory_influenced
                 and decision.memory_conflict
                 and decision.memory_resolution == "CONFLICT_ABSTAIN"
@@ -636,6 +721,34 @@ def _record(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
         "producer_agent_id": episode.evidence.get("producer_agent_id"),
         "execution_receipt_id": receipt.receipt_id,
         "idempotent_replay": False,
+    }
+
+
+def _revoke(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
+    scope_id = str(body.get("scope_id", "")).strip()
+    episode_id = str(body.get("episode_id", "")).strip()
+    reason = str(body.get("reason", "")).strip()
+    if not scope_id or not episode_id or not reason:
+        raise ValueError("scope_id, episode_id, and reason are required")
+    if len(reason) > 500:
+        raise ValueError("revocation reason must be at most 500 characters")
+    try:
+        episode_id = str(UUID(episode_id))
+    except (ValueError, AttributeError) as exc:
+        raise ValueError("episode_id must be a valid UUID") from exc
+
+    result = _build_memory_store().revoke_current_head(
+        scope_id=scope_id,
+        producer_agent_id=agent_id,
+        episode_id=episode_id,
+        reason=reason,
+    )
+    return {
+        "revocation_id": result.revocation_id,
+        "episode_id": result.episode_id,
+        "producer_agent_id": result.producer_agent_id,
+        "revoked": True,
+        "idempotent_replay": result.idempotent_replay,
     }
 
 
@@ -733,6 +846,23 @@ def _handle_request(event: dict[str, Any], _context: Any) -> dict[str, Any]:
                 limit=int(os.getenv("AGENT_RATE_LIMIT_PER_MINUTE", "60")),
             )
             return _json_response(201, _record(body, agent_id=grant.agent_id))
+        if method == "POST" and path == "/revoke":
+            scope_id = str(body.get("scope_id", "")).strip()
+            if not scope_id:
+                return _json_response(
+                    400, {"error": "bad_request", "detail": "scope_id is required"}
+                )
+            grant = _authenticate_revoke_agent(event, scope_id=scope_id)
+            if grant is None:
+                return _json_response(403, {"error": "forbidden"})
+            if "agent_id" in body:
+                return _json_response(400, {"error": "agent_id_is_server_bound"})
+            _enforce_rate_limit(
+                principal_id=grant.agent_id,
+                route_group="agent-api",
+                limit=int(os.getenv("AGENT_RATE_LIMIT_PER_MINUTE", "60")),
+            )
+            return _json_response(200, _revoke(body, agent_id=grant.agent_id))
         if method == "POST" and path == "/demo":
             if not _demo_authorized(event):
                 return _json_response(401, {"error": "unauthorized"})
@@ -761,7 +891,12 @@ def _handle_request(event: dict[str, Any], _context: Any) -> dict[str, Any]:
             },
             headers={"retry-after": str(exc.retry_after_seconds)},
         )
-    except (SupersessionConflict, SupersessionWriteConflict) as exc:
+    except (
+        SupersessionConflict,
+        SupersessionWriteConflict,
+        MemoryRevocationConflict,
+        ExecutionPolicyConflict,
+    ) as exc:
         return _json_response(409, {"error": "conflict", "detail": str(exc)})
     except (ValueError, TypeError, json.JSONDecodeError) as exc:
         return _json_response(400, {"error": "bad_request", "detail": str(exc)})

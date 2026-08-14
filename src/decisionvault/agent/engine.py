@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Mapping
 from uuid import uuid4
 
-from decisionvault.domain import Decision, DecisionEpisode, Outcome
+from decisionvault.domain import Decision, DecisionAction, DecisionEpisode, Outcome
 from decisionvault.memory.base import MemoryStore
 from decisionvault.agent.policy import OutcomeAwarePolicy
 from decisionvault.providers.base import DecisionAdvisor
@@ -33,7 +33,7 @@ class DecisionAgent:
             else []
         )
         decision = self.policy.decide(recalled=recalled)
-        if self.advisor is None:
+        if self.advisor is None or decision.action == DecisionAction.ABSTAIN:
             return decision
 
         governed_episode_ids = set(decision.recalled_episode_ids)
@@ -73,6 +73,8 @@ class DecisionAgent:
         confidence: float = 1.0,
         evidence: Mapping[str, str] | None = None,
     ) -> DecisionEpisode:
+        if not decision.executable or decision.strategy is None:
+            raise ValueError("cannot record an outcome for a non-executable decision")
         episode_evidence = dict(evidence or {})
         episode_evidence.update(
             {

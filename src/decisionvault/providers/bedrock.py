@@ -135,9 +135,12 @@ class BedrockDecisionAdvisor:
             for item in recalled[:5]
         ]
         memory_block = "\n".join(memory_lines) or "none"
+        committed_strategy = (
+            decision.strategy.value if decision.strategy is not None else "NONE"
+        )
         prompt = (
             f"Situation: {situation}\n"
-            f"Committed strategy: {decision.strategy.value}\n"
+            f"Committed strategy: {committed_strategy}\n"
             f"Deterministic reason: {decision.reason}\n"
             f"Recalled memory evidence:\n{memory_block}\n\n"
             "In at most 60 words, explain why the committed strategy is "

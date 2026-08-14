@@ -51,7 +51,7 @@ class FakeMcpClient:
             }
         if name == "explain_query":
             expected = (
-                "decision_memory_heads_scope_semantic_vec_idx"
+                "decision_memory_heads_scope_space_semantic_vec_idx"
                 if self.semantic
                 else "decision_episodes_scope_embedding_vec_idx"
             )
@@ -83,5 +83,6 @@ def test_memory_auditor_agent_checks_production_semantic_contract():
         scope_id="shared-team",
         situation="replacement card checkout failure",
         semantic_query_vector=[0.1, 0.9],
+        semantic_embedding_space="test-space-v1",
     )
     assert result.passed is True

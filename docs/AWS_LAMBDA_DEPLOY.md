@@ -15,8 +15,9 @@ advisor cannot change the committed strategy.
 - Timeout: 30 seconds
 - Function URL: public `NONE` for hackathon demo availability
 - `POST /demo` and `/governance-demo`: protected by `X-DecisionVault-Token`
-- `POST /record` and `/decide`: protected by `X-DecisionVault-Agent-Token`, with
-  server-side identity / scope / permission grants
+- `POST /execute`, `/record`, `/decide`, and `/revoke`: protected by
+  `X-DecisionVault-Agent-Token`, with server-side identity / namespace /
+  permission grants; `/revoke` also requires `REVOKE_AGENT_IDS`
 
 Hosted Lambda environment variables:
 
@@ -29,6 +30,8 @@ Hosted Lambda environment variables:
 - `DATABASE_CONNECT_TIMEOUT_SECONDS=5`
 - `DATABASE_STATEMENT_TIMEOUT_MS=8000`
 - `READINESS_CACHE_SECONDS=30`
+- `REVOKE_AGENT_IDS` — comma-separated server-bound agent IDs allowed to invoke
+  revocation after normal token/scope capability checks; contains no raw token
 
 The referenced secret stores `DATABASE_URL`, `NVIDIA_API_KEY`, `DEMO_API_TOKEN`,
 `AGENT_AUTH_JSON`, and `EXECUTION_RECEIPT_SECRET`. The Lambda execution role is
@@ -43,20 +46,27 @@ Secrets Manager at runtime.
 - `GET /` — public judge UI
 - `GET /health`
 - `GET /health/live` — process liveness only
-- `GET /health/ready` — active Secrets Manager + CockroachDB + E5-v5 readiness
+- `GET /health/ready` — active Secrets Manager + CockroachDB governance-v2
+  schema + E5-v5 readiness
 - `POST /execute` — agent-token authenticated sandbox execution; returns a signed
-  receipt
+  receipt only if the current deterministic policy is executable and commits the
+  requested strategy
 - `POST /record` — agent-token authenticated outcome recording
 - `POST /decide` — agent-token authenticated scoped recall/decision
+- `POST /revoke` — producer-bound current-head revocation with append-only audit
+  record and idempotent replay
 - `POST /demo` — protected atomic Memory OFF vs Memory ON proof with cleanup
 - `POST /governance-demo` — protected contradictory-memory abstention proof
 
-The `/decide` response exposes `memory_influenced`, recalled episode IDs, the
-committed strategy, and (when available) the bounded model explanation.
+The `/decide` response exposes `memory_influenced`, recalled episode IDs,
+`strategy`, `action`, `executable`, and (when available) the bounded model
+explanation. A conflict abstention is `strategy=null`, `action=ABSTAIN`, and
+`executable=false`.
 
-The caller does not supply `agent_id` to `/execute`, `/record`, or `/decide`; identity comes
-from the authenticated grant. Requests outside the token's allowed scope prefix
-or permission are rejected.
+The caller does not supply `agent_id` to `/execute`, `/record`, `/decide`, or
+`/revoke`; identity comes from the authenticated grant. Requests outside the
+token's namespace boundary or permission are rejected. Revocation additionally
+requires that server-bound identity in `REVOKE_AGENT_IDS`.
 
 `/record` does not accept direct `outcome` / `effectiveness` / `confidence`
 fields. It requires the signed receipt returned by `/execute`; the receipt ID is
@@ -84,7 +94,12 @@ The verified Phase 6 evidence includes:
 5. Rejection of caller-supplied `agent_id`, demo-token use on agent routes, and a
    valid agent token outside its granted scope.
 6. `/demo` and `/governance-demo` live judge proofs.
-7. Cleanup of all temporary demonstration memory rows and governed heads.
+7. Hosted `/execute` rejects active conflict abstention with HTTP 409 and no
+   receipt.
+8. Hosted `/revoke` removes the producer's current head, replays idempotently,
+   and returns the same revocation audit ID.
+9. Cleanup of all temporary demonstration memory rows, governed heads, and
+   revocation rows.
 
 The deployed function is named `decisionvault-agent` in `ap-northeast-1`.
 Committed evidence intentionally omits the AWS account ID, AWS login cache,

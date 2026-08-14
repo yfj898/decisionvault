@@ -83,14 +83,16 @@ Required visible result:
 
 ```text
 resolution=CONFLICT_ABSTAIN
-strategy=GENERIC_RETRY
+action=ABSTAIN
+strategy=null
+executable=false
 memory_conflict=true, memory_influenced=false
 PASS
 ```
 
-`CONFLICT_ABSTAIN` is the governance resolution, not a separate executable
-strategy. The deterministic fallback remains `GENERIC_RETRY` because conflicting
-memory is not allowed to influence the action.
+`CONFLICT_ABSTAIN` is now a first-class non-executable decision. The execution
+gateway re-runs the current deterministic policy and will not sign an execution
+receipt while this abstention is active.
 
 ### 1:56–2:28 — production evidence
 
@@ -99,7 +101,9 @@ The automation centers the static **Reproducible submission evidence** panel.
 Call out only the evidence already frozen in the repository:
 
 - native `semantic_embedding VECTOR(1024)`;
-- `decision_memory_heads_scope_semantic_vec_idx`;
+- model/version-bound `semantic_embedding_space`;
+- `decision_memory_heads_scope_space_semantic_vec_idx`;
+- authenticated, producer-bound `/revoke` with append-only audit evidence;
 - CockroachDB Cloud Managed MCP Memory Auditor;
 - Memory ON benefit target accuracy `100%`;
 - failed-strategy repetition `0%`;

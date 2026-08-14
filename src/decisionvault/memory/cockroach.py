@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, Sequence
 import json
+from uuid import uuid4
 
 from decisionvault.domain import (
     DecisionEpisode,
@@ -19,6 +20,18 @@ Vector = Sequence[float]
 
 class SupersessionWriteConflict(RuntimeError):
     """A correction no longer targets the producer's current governed head."""
+
+
+class MemoryRevocationConflict(RuntimeError):
+    """A revocation target is missing or no longer the producer's current head."""
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryRevocationResult:
+    revocation_id: str
+    episode_id: str
+    producer_agent_id: str
+    idempotent_replay: bool
 
 
 def _vector_literal(vector: Vector) -> str:
@@ -41,6 +54,17 @@ class CockroachVectorMemoryStore:
     query_embedder: Callable[[str], Vector] | None = None
     semantic_embedder: Callable[[str], Vector] | None = None
     semantic_query_embedder: Callable[[str], Vector] | None = None
+    semantic_embedding_space: str | None = None
+
+    def __post_init__(self) -> None:
+        semantic_enabled = (
+            self.semantic_embedder is not None
+            or self.semantic_query_embedder is not None
+        )
+        if semantic_enabled and not (self.semantic_embedding_space or "").strip():
+            raise ValueError(
+                "semantic_embedding_space is required for semantic persistence/retrieval"
+            )
 
     def save(self, episode: DecisionEpisode) -> None:
         vector = _vector_literal(self.embedder(episode.situation))
@@ -55,6 +79,7 @@ class CockroachVectorMemoryStore:
             if self.semantic_embedder is not None
             else None
         )
+        semantic_space = (self.semantic_embedding_space or "").strip() or None
         if semantic_vector is None:
             sql = """
                 INSERT INTO decision_episodes (
@@ -87,12 +112,12 @@ class CockroachVectorMemoryStore:
                     episode_id, scope_id, situation, strategy, outcome,
                     effectiveness, confidence, evidence, execution_receipt_id,
                     supersedes_episode_id, embedding,
-                    semantic_embedding, created_at
+                    semantic_embedding, semantic_embedding_space, created_at
                 )
                 VALUES (
                     %s::UUID, %s, %s, %s, %s,
                     %s, %s, %s::JSONB, %s, %s::UUID, %s::VECTOR,
-                    %s::VECTOR, %s
+                    %s::VECTOR, %s, %s
                 )
             """
             params = (
@@ -108,6 +133,7 @@ class CockroachVectorMemoryStore:
                 supersedes_episode_id,
                 vector,
                 semantic_vector,
+                semantic_space,
                 episode.created_at,
             )
         def write_transaction() -> None:
@@ -149,11 +175,11 @@ class CockroachVectorMemoryStore:
                                 scope_id, producer_agent_id, strategy, episode_id,
                                 situation, outcome, effectiveness, confidence,
                                 evidence, execution_receipt_id, supersedes_episode_id,
-                                semantic_embedding, created_at
+                                semantic_embedding, semantic_embedding_space, created_at
                             ) VALUES (
                                 %s, %s, %s, %s::UUID,
                                 %s, %s, %s, %s,
-                                %s::JSONB, %s, %s::UUID, %s::VECTOR, %s
+                                %s::JSONB, %s, %s::UUID, %s::VECTOR, %s, %s
                             )
                             """,
                             (
@@ -169,6 +195,7 @@ class CockroachVectorMemoryStore:
                                 execution_receipt_id,
                                 supersedes_episode_id,
                                 semantic_vector,
+                                semantic_space,
                                 episode.created_at,
                             ),
                         )
@@ -183,6 +210,87 @@ class CockroachVectorMemoryStore:
 
         retry_cockroach_serialization(write_transaction)
 
+    def revoke_current_head(
+        self,
+        *,
+        scope_id: str,
+        producer_agent_id: str,
+        episode_id: str,
+        reason: str,
+    ) -> MemoryRevocationResult:
+        def revoke_transaction() -> MemoryRevocationResult:
+            conn = self.connection_factory()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT revocation_id::STRING, producer_agent_id
+                        FROM decision_memory_revocations
+                        WHERE scope_id = %s AND episode_id = %s::UUID
+                        """,
+                        (scope_id, episode_id),
+                    )
+                    existing = cur.fetchone()
+                    if existing is not None:
+                        if str(existing[1]) != producer_agent_id:
+                            raise MemoryRevocationConflict(
+                                "revocation belongs to a different producer"
+                            )
+                        return MemoryRevocationResult(
+                            revocation_id=str(existing[0]),
+                            episode_id=episode_id,
+                            producer_agent_id=producer_agent_id,
+                            idempotent_replay=True,
+                        )
+
+                    cur.execute(
+                        """
+                        DELETE FROM decision_memory_heads
+                        WHERE scope_id = %s
+                          AND producer_agent_id = %s
+                          AND episode_id = %s::UUID
+                        RETURNING episode_id::STRING
+                        """,
+                        (scope_id, producer_agent_id, episode_id),
+                    )
+                    if cur.fetchone() is None:
+                        raise MemoryRevocationConflict(
+                            "revocation target is not the producer's current governed head"
+                        )
+
+                    revocation_id = str(uuid4())
+                    cur.execute(
+                        """
+                        INSERT INTO decision_memory_revocations (
+                            revocation_id, scope_id, episode_id,
+                            producer_agent_id, reason
+                        ) VALUES (%s::UUID, %s, %s::UUID, %s, %s)
+                        """,
+                        (
+                            revocation_id,
+                            scope_id,
+                            episode_id,
+                            producer_agent_id,
+                            reason,
+                        ),
+                    )
+                conn.commit()
+                return MemoryRevocationResult(
+                    revocation_id=revocation_id,
+                    episode_id=episode_id,
+                    producer_agent_id=producer_agent_id,
+                    idempotent_replay=False,
+                )
+            except Exception:
+                rollback = getattr(conn, "rollback", None)
+                if callable(rollback):
+                    rollback()
+                raise
+            finally:
+                conn.close()
+
+        return retry_cockroach_serialization(revoke_transaction)
+
     def recall(
         self,
         *,
@@ -192,6 +300,7 @@ class CockroachVectorMemoryStore:
     ) -> list[RecalledEpisode]:
         if self.semantic_query_embedder is not None:
             vector = _vector_literal(self.semantic_query_embedder(situation))
+            semantic_space = (self.semantic_embedding_space or "").strip()
             sql = """
                 SELECT
                     episode_id::STRING,
@@ -206,6 +315,7 @@ class CockroachVectorMemoryStore:
                     semantic_embedding <=> %s::VECTOR AS cosine_distance
                 FROM decision_memory_heads
                 WHERE scope_id = %s
+                  AND semantic_embedding_space = %s
                   AND COALESCE(upper(evidence->>'memory_status'), 'ACTIVE') <> 'REVOKED'
                   AND (
                     COALESCE(lower(evidence->>'pinned'), 'false') = 'true'
@@ -242,7 +352,12 @@ class CockroachVectorMemoryStore:
             conn = self.connection_factory()
             try:
                 with conn.cursor() as cur:
-                    cur.execute(sql, (vector, scope_id, vector, limit))
+                    params = (
+                        (vector, scope_id, semantic_space, vector, limit)
+                        if self.semantic_query_embedder is not None
+                        else (vector, scope_id, vector, limit)
+                    )
+                    cur.execute(sql, params)
                     return cur.fetchall()
             except Exception:
                 rollback = getattr(conn, "rollback", None)

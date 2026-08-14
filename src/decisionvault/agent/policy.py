@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from decisionvault.agent.memory_governance import ConflictAwareMemoryResolver
-from decisionvault.domain import Decision, RecalledEpisode, Strategy
+from decisionvault.domain import Decision, DecisionAction, RecalledEpisode, Strategy
 
 
 @dataclass(slots=True)
@@ -29,6 +29,17 @@ class OutcomeAwarePolicy:
                 memory_influenced=True,
                 memory_resolution=resolution.resolution,
                 memory_conflict=resolution.conflict,
+            )
+        if resolution.resolution == "CONFLICT_ABSTAIN":
+            return Decision(
+                strategy=None,
+                action=DecisionAction.ABSTAIN,
+                reason=resolution.reason,
+                recalled_episode_ids=resolution.episode_ids,
+                recalled_producer_agent_ids=resolution.producer_agent_ids,
+                memory_influenced=False,
+                memory_resolution=resolution.resolution,
+                memory_conflict=True,
             )
         return Decision(
             strategy=Strategy.GENERIC_RETRY,

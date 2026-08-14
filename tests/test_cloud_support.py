@@ -7,6 +7,7 @@ import pytest
 from decisionvault.domain import DecisionEpisode, Outcome, Strategy
 from decisionvault.memory.cockroach import (
     CockroachVectorMemoryStore,
+    MemoryRevocationConflict,
     SupersessionWriteConflict,
 )
 from decisionvault.memory.connection import psycopg_connection_factory
@@ -14,6 +15,7 @@ from decisionvault.memory.embedding import (
     NVIDIA_EMBEDDING_DIMENSIONS,
     deterministic_text_embedding,
     project_dense_embedding,
+    semantic_embedding_space,
 )
 
 
@@ -52,8 +54,29 @@ class FakeConnection:
     def commit(self):
         self.committed = True
 
+    def rollback(self):
+        self.committed = False
+
     def close(self):
         self.closed = True
+
+
+class ScriptedCursor(FakeCursor):
+    def __init__(self, fetchone_values):
+        super().__init__(rows=[])
+        self.fetchone_values = list(fetchone_values)
+
+    def fetchone(self):
+        if not self.fetchone_values:
+            return None
+        return self.fetchone_values.pop(0)
+
+
+class ScriptedConnection(FakeConnection):
+    def __init__(self, fetchone_values):
+        self.cursor_value = ScriptedCursor(fetchone_values)
+        self.committed = False
+        self.closed = False
 
 
 def test_deterministic_embedding_is_stable_and_normalized():
@@ -190,6 +213,21 @@ def test_nvidia_production_embedding_width_is_native_1024():
     assert NVIDIA_EMBEDDING_DIMENSIONS == 1024
 
 
+def test_semantic_embedding_space_binds_model_dimensions_and_contract():
+    assert semantic_embedding_space("nvidia/nv-embedqa-e5-v5") == (
+        "nvidia/nv-embedqa-e5-v5|dim=1024|contract=query-passage-v1"
+    )
+
+
+def test_semantic_store_requires_explicit_embedding_space():
+    with pytest.raises(ValueError, match="semantic_embedding_space"):
+        CockroachVectorMemoryStore(
+            connection_factory=lambda: FakeConnection(),
+            embedder=lambda _: [1.0, 0.0],
+            semantic_embedder=lambda _: [0.75, 0.25],
+        )
+
+
 def test_cockroach_store_uses_semantic_heads_for_production_recall():
     conn = FakeConnection(rows=[])
     calls = []
@@ -203,6 +241,7 @@ def test_cockroach_store_uses_semantic_heads_for_production_recall():
         embedder=lambda _: [1.0, 0.0],
         semantic_embedder=lambda _: [0.75, 0.25],
         semantic_query_embedder=semantic_query,
+        semantic_embedding_space="test-space-v1",
     )
     store.recall(scope_id="scope-1", situation="semantic query", limit=5)
 
@@ -214,7 +253,13 @@ def test_cockroach_store_uses_semantic_heads_for_production_recall():
     assert "INTERVAL '90 days'" in sql
     assert "outcome = 'SUCCESS' AND effectiveness >= 0.7" in sql
     assert "outcome = 'FAILED' AND confidence >= 0.6" in sql
-    assert params[0] == "[0.25000000,0.75000000]"
+    assert params == (
+        "[0.25000000,0.75000000]",
+        "scope-1",
+        "test-space-v1",
+        "[0.25000000,0.75000000]",
+        5,
+    )
 
 
 def test_semantic_supersession_uses_atomic_current_head_compare_and_delete():
@@ -223,6 +268,7 @@ def test_semantic_supersession_uses_atomic_current_head_compare_and_delete():
         connection_factory=lambda: conn,
         embedder=lambda _: [1.0, 0.0],
         semantic_embedder=lambda _: [0.75, 0.25],
+        semantic_embedding_space="test-space-v1",
     )
     episode = DecisionEpisode(
         episode_id="00000000-0000-0000-0000-000000000002",
@@ -262,6 +308,7 @@ def test_supersession_loses_if_normal_write_already_replaced_current_head():
         connection_factory=lambda: conn,
         embedder=lambda _: [1.0, 0.0],
         semantic_embedder=lambda _: [0.75, 0.25],
+        semantic_embedding_space="test-space-v1",
     )
     episode = DecisionEpisode(
         episode_id="00000000-0000-0000-0000-000000000003",
@@ -283,4 +330,70 @@ def test_supersession_loses_if_normal_write_already_replaced_current_head():
 
     assert len(conn.cursor_value.executions) == 1
     assert "DELETE FROM decision_memory_heads" in conn.cursor_value.executions[0][0]
+    assert conn.committed is False
+
+
+def test_revoke_current_head_is_atomic_and_audited():
+    episode_id = "00000000-0000-0000-0000-000000000010"
+    conn = ScriptedConnection([None, (episode_id,)])
+    store = CockroachVectorMemoryStore(
+        connection_factory=lambda: conn,
+        embedder=lambda _: [1.0, 0.0],
+    )
+
+    result = store.revoke_current_head(
+        scope_id="scope-1",
+        producer_agent_id="agent-a",
+        episode_id=episode_id,
+        reason="operator confirmed this observation is invalid",
+    )
+
+    assert result.episode_id == episode_id
+    assert result.producer_agent_id == "agent-a"
+    assert result.idempotent_replay is False
+    assert "SELECT revocation_id::STRING" in conn.cursor_value.executions[0][0]
+    delete_sql, delete_params = conn.cursor_value.executions[1]
+    assert "DELETE FROM decision_memory_heads" in delete_sql
+    assert delete_params == ("scope-1", "agent-a", episode_id)
+    assert "INSERT INTO decision_memory_revocations" in conn.cursor_value.executions[2][0]
+    assert conn.committed is True
+
+
+def test_revoke_current_head_replay_returns_existing_audit_event():
+    episode_id = "00000000-0000-0000-0000-000000000010"
+    revocation_id = "00000000-0000-0000-0000-000000000011"
+    conn = ScriptedConnection([(revocation_id, "agent-a")])
+    store = CockroachVectorMemoryStore(
+        connection_factory=lambda: conn,
+        embedder=lambda _: [1.0, 0.0],
+    )
+
+    result = store.revoke_current_head(
+        scope_id="scope-1",
+        producer_agent_id="agent-a",
+        episode_id=episode_id,
+        reason="same request replayed",
+    )
+
+    assert result.revocation_id == revocation_id
+    assert result.idempotent_replay is True
+    assert len(conn.cursor_value.executions) == 1
+
+
+def test_revoke_rejects_non_current_or_cross_producer_target():
+    episode_id = "00000000-0000-0000-0000-000000000010"
+    conn = ScriptedConnection([None, None])
+    store = CockroachVectorMemoryStore(
+        connection_factory=lambda: conn,
+        embedder=lambda _: [1.0, 0.0],
+    )
+
+    with pytest.raises(MemoryRevocationConflict, match="current governed head"):
+        store.revoke_current_head(
+            scope_id="scope-1",
+            producer_agent_id="agent-b",
+            episode_id=episode_id,
+            reason="attempted cross-producer revoke",
+        )
+
     assert conn.committed is False

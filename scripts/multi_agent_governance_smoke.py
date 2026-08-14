@@ -11,7 +11,7 @@ from decisionvault.agent.memory_governance import (
     ConflictAwareMemoryResolver,
 )
 from decisionvault.agent.policy import OutcomeAwarePolicy
-from decisionvault.domain import DecisionEpisode, Outcome, Strategy
+from decisionvault.domain import DecisionAction, DecisionEpisode, Outcome, Strategy
 from decisionvault.memory.cockroach import CockroachVectorMemoryStore
 from decisionvault.memory.connection import psycopg_connection_factory
 from decisionvault.memory.embedding import NvidiaSemanticEmbedder, deterministic_text_embedding
@@ -82,6 +82,7 @@ def _build_store(connection_factory, *, semantic: bool):
         embedder=deterministic_text_embedding,
         semantic_embedder=embedder.embed_passage,
         semantic_query_embedder=embedder.embed_query,
+        semantic_embedding_space=embedder.embedding_space,
     )
 
 
@@ -123,11 +124,18 @@ def _run(store, prefix: str, *, semantic: bool) -> None:
         scope_id=conflict_scope,
         situation=SITUATION,
     )
-    print(f"balanced_conflict_strategy={conflict.strategy.value}")
+    print(
+        "balanced_conflict_strategy="
+        + (conflict.strategy.value if conflict.strategy is not None else "NONE")
+    )
+    print(f"balanced_conflict_action={conflict.action.value}")
+    print(f"balanced_conflict_executable={conflict.executable}")
     print(f"balanced_conflict_influenced={conflict.memory_influenced}")
     print(f"balanced_conflict_resolution={conflict.memory_resolution}")
     if (
-        conflict.strategy != Strategy.GENERIC_RETRY
+        conflict.strategy is not None
+        or conflict.action != DecisionAction.ABSTAIN
+        or conflict.executable
         or conflict.memory_influenced
         or not conflict.memory_conflict
     ):
@@ -238,9 +246,17 @@ def _run(store, prefix: str, *, semantic: bool) -> None:
         scope_id=duplicate_scope,
         situation=SITUATION,
     )
-    print(f"duplicate_vote_strategy={duplicate.strategy.value}")
+    print(
+        "duplicate_vote_strategy="
+        + (duplicate.strategy.value if duplicate.strategy is not None else "NONE")
+    )
+    print(f"duplicate_vote_action={duplicate.action.value}")
     print(f"duplicate_vote_conflict={duplicate.memory_conflict}")
-    if duplicate.strategy != Strategy.GENERIC_RETRY or not duplicate.memory_conflict:
+    if (
+        duplicate.strategy is not None
+        or duplicate.action != DecisionAction.ABSTAIN
+        or not duplicate.memory_conflict
+    ):
         raise RuntimeError("duplicate producer writes amplified one producer's vote")
 
     print("multi_agent_governance_smoke=PASS")

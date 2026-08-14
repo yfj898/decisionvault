@@ -6,6 +6,20 @@ import json
 from typing import Mapping
 
 
+SCOPE_BOUNDARIES = frozenset("-/:._")
+AGENT_PERMISSIONS = frozenset({"decide", "execute", "record", "revoke"})
+
+
+def _scope_prefix_matches(prefix: str, scope_id: str) -> bool:
+    if scope_id == prefix:
+        return True
+    if not scope_id.startswith(prefix):
+        return False
+    if prefix[-1] in SCOPE_BOUNDARIES:
+        return True
+    return len(scope_id) > len(prefix) and scope_id[len(prefix)] in SCOPE_BOUNDARIES
+
+
 @dataclass(frozen=True, slots=True)
 class AgentGrant:
     agent_id: str
@@ -16,7 +30,7 @@ class AgentGrant:
     def allows(self, *, permission: str, scope_id: str) -> bool:
         if permission not in self.permissions:
             return False
-        return any(scope_id.startswith(prefix) for prefix in self.scope_prefixes)
+        return any(_scope_prefix_matches(prefix, scope_id) for prefix in self.scope_prefixes)
 
 
 def token_digest(token: str) -> str:
@@ -31,6 +45,7 @@ def load_agent_grants(raw: str) -> dict[str, AgentGrant]:
         raise ValueError("AGENT_AUTH_JSON must be a JSON object")
 
     grants: dict[str, AgentGrant] = {}
+    agent_ids: set[str] = set()
     for digest, value in payload.items():
         if not isinstance(value, dict):
             raise ValueError("each AGENT_AUTH_JSON grant must be an object")
@@ -42,11 +57,17 @@ def load_agent_grants(raw: str) -> dict[str, AgentGrant]:
         agent_id = str(value.get("agent_id", "")).strip()
         if not agent_id:
             raise ValueError("agent_id is required in every agent grant")
-        prefixes = tuple(
+        if agent_id in agent_ids:
+            raise ValueError("agent_id must be unique across agent grants")
+        agent_ids.add(agent_id)
+        raw_prefixes = [
             str(item).strip()
             for item in value.get("scope_prefixes", [])
             if str(item).strip()
-        )
+        ]
+        if any("*" in prefix for prefix in raw_prefixes):
+            raise ValueError("scope_prefixes do not support wildcard characters")
+        prefixes = tuple(dict.fromkeys(raw_prefixes))
         if not prefixes:
             raise ValueError("at least one scope_prefix is required")
         permissions = frozenset(
@@ -54,9 +75,9 @@ def load_agent_grants(raw: str) -> dict[str, AgentGrant]:
             for item in value.get("permissions", [])
             if str(item).strip()
         )
-        if not permissions or not permissions <= {"decide", "execute", "record"}:
+        if not permissions or not permissions <= AGENT_PERMISSIONS:
             raise ValueError(
-                "permissions must contain decide, execute, and/or record"
+                "permissions must contain decide, execute, record, and/or revoke"
             )
         trust = float(value.get("trust", 0.25))
         if not 0.0 <= trust <= 1.0:

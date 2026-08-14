@@ -20,6 +20,10 @@ bounded explanation and AWS Lambda for the required AWS deployment.
 - [x] ANN vs exact comparison and `vector search` plan evidence.
 - [x] Production semantic DVI on
   `decision_memory_heads.semantic_embedding VECTOR(1024)`.
+- [x] `semantic_embedding_space` binds model ID / dimension / query-passage
+  contract; production DVI prefixes on scope + embedding space.
+- [x] Cross-space retrieval fails closed and CAS-safe re-embedding migration was
+  verified on CockroachDB Cloud.
 - [x] Native NVIDIA E5-v5 query/passage path verified without the former 64D
   hosted projection.
 
@@ -47,6 +51,11 @@ bounded explanation and AWS Lambda for the required AWS deployment.
 - [x] CockroachDB remains the persistent memory authority.
 - [x] Judge demo token separated from general agent API tokens.
 - [x] General agent tokens bind identity, scope prefixes, permissions, and trust.
+- [x] Namespace-bound authorization prevents raw-prefix collisions such as
+  `team-a` authorizing `team-admin`.
+- [x] First-class conflict abstention is non-executable and `/execute` blocks it.
+- [x] Producer-bound `/revoke` uses a second server-side agent-ID allowlist and
+  append-only CockroachDB revocation audit table.
 
 ## Phase 8 / red-team gates
 
@@ -56,6 +65,8 @@ bounded explanation and AWS Lambda for the required AWS deployment.
 - [x] Candidate-crowding adversarial regression.
 - [x] Conflict / stale / supersession / cross-scope controls.
 - [x] Hosted agent identity and scope-authorization tests.
+- [x] Hosted revoke + idempotent replay proof.
+- [x] Hosted conflict `/execute` rejection: HTTP 409 / no receipt.
 
 ## Evidence and security gate
 

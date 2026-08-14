@@ -5,6 +5,9 @@
 ALTER TABLE decision_episodes
 ADD COLUMN IF NOT EXISTS semantic_embedding VECTOR(1024);
 
+ALTER TABLE decision_episodes
+ADD COLUMN IF NOT EXISTS semantic_embedding_space STRING;
+
 CREATE TABLE IF NOT EXISTS decision_memory_heads (
     scope_id STRING NOT NULL,
     producer_agent_id STRING NOT NULL,
@@ -16,9 +19,14 @@ CREATE TABLE IF NOT EXISTS decision_memory_heads (
     confidence FLOAT8 NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
     evidence JSONB NOT NULL DEFAULT '{}'::JSONB,
     semantic_embedding VECTOR(1024) NOT NULL,
+    semantic_embedding_space STRING NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (scope_id, producer_agent_id, strategy)
 );
 
-CREATE VECTOR INDEX IF NOT EXISTS decision_memory_heads_scope_semantic_vec_idx
-ON decision_memory_heads (scope_id, semantic_embedding vector_cosine_ops);
+CREATE VECTOR INDEX IF NOT EXISTS decision_memory_heads_scope_space_semantic_vec_idx
+ON decision_memory_heads (
+    scope_id,
+    semantic_embedding_space,
+    semantic_embedding vector_cosine_ops
+);
