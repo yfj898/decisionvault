@@ -28,30 +28,45 @@ class DecisionAgent:
         recalled: list = []
         adaptive_memories: list = []
         if self.memory_enabled:
-            governed_recall = getattr(self.memory, "recall_governed", None)
-            if callable(governed_recall):
-                recalled = governed_recall(
+            bundled_recall = getattr(
+                self.memory, "recall_governed_and_adaptive", None
+            )
+            if callable(bundled_recall):
+                recalled, adaptive_memories = bundled_recall(
                     scope_id=scope_id,
                     situation=situation,
-                    minimum_similarity=self.policy.resolver.minimum_similarity,
+                    minimum_episode_similarity=self.policy.resolver.minimum_similarity,
+                    minimum_adaptive_similarity=(
+                        self.policy.adaptive_resolver.minimum_similarity
+                    ),
                 )
             else:
-                # Compatibility fallback for third-party stores that have not
-                # implemented the governed coverage contract yet. Production
-                # stores implement recall_governed, so correctness there is not
-                # bounded by this ANN hint.
-                recalled = self.memory.recall(
-                    scope_id=scope_id,
-                    situation=situation,
-                    limit=GOVERNANCE_ANN_CANDIDATE_HINT,
-                )
-            recall_adaptive = getattr(self.memory, "recall_adaptive", None)
-            if callable(recall_adaptive):
-                adaptive_memories = recall_adaptive(
-                    scope_id=scope_id,
-                    situation=situation,
-                    minimum_similarity=self.policy.adaptive_resolver.minimum_similarity,
-                )
+                governed_recall = getattr(self.memory, "recall_governed", None)
+                if callable(governed_recall):
+                    recalled = governed_recall(
+                        scope_id=scope_id,
+                        situation=situation,
+                        minimum_similarity=self.policy.resolver.minimum_similarity,
+                    )
+                else:
+                    # Compatibility fallback for third-party stores that have not
+                    # implemented the governed coverage contract yet. Production
+                    # stores implement recall_governed, so correctness there is not
+                    # bounded by this ANN hint.
+                    recalled = self.memory.recall(
+                        scope_id=scope_id,
+                        situation=situation,
+                        limit=GOVERNANCE_ANN_CANDIDATE_HINT,
+                    )
+                recall_adaptive = getattr(self.memory, "recall_adaptive", None)
+                if callable(recall_adaptive):
+                    adaptive_memories = recall_adaptive(
+                        scope_id=scope_id,
+                        situation=situation,
+                        minimum_similarity=(
+                            self.policy.adaptive_resolver.minimum_similarity
+                        ),
+                    )
         decision = self.policy.decide(
             recalled=recalled,
             adaptive_memories=adaptive_memories,

@@ -766,6 +766,138 @@ class CockroachVectorMemoryStore:
         rows = retry_cockroach_serialization(read_transaction)
         return [_adaptive_memory_from_row(tuple(row)) for row in rows]
 
+    def recall_governed_and_adaptive(
+        self,
+        *,
+        scope_id: str,
+        situation: str,
+        minimum_episode_similarity: float,
+        minimum_adaptive_similarity: float,
+    ) -> tuple[list[RecalledEpisode], list[GovernedMemory]]:
+        """Recall L1 and L3 with one query embedding and one DB transaction.
+
+        The existing ANN and exact-coverage query shapes are preserved. This
+        only removes duplicate provider work and connection setup; governance
+        coverage remains authoritative for both layers.
+        """
+
+        if self.semantic_query_embedder is None:
+            return (
+                self.recall_governed(
+                    scope_id=scope_id,
+                    situation=situation,
+                    minimum_similarity=minimum_episode_similarity,
+                ),
+                [],
+            )
+        for value in (minimum_episode_similarity, minimum_adaptive_similarity):
+            if not 0.0 <= value <= 1.0:
+                raise ValueError("minimum_similarity must be between 0 and 1")
+        semantic_space = (self.semantic_embedding_space or "").strip()
+        if not semantic_space:
+            raise ValueError("semantic_embedding_space is required")
+
+        vector = _vector_literal(self.semantic_query_embedder(situation))
+        episode_ann = semantic_ann_sql(
+            vector_expr="%s::VECTOR", scope_expr="%s", space_expr="%s"
+        )
+        episode_coverage = semantic_coverage_sql(
+            vector_expr="%s::VECTOR",
+            scope_expr="%s",
+            space_expr="%s",
+            max_distance_expr="%s",
+        )
+        adaptive_ann = adaptive_semantic_ann_sql(
+            vector_expr="%s::VECTOR", scope_expr="%s", space_expr="%s"
+        )
+        adaptive_coverage = adaptive_semantic_coverage_sql(
+            vector_expr="%s::VECTOR",
+            scope_expr="%s",
+            space_expr="%s",
+            governance_revision_expr="%s",
+            max_distance_expr="%s",
+        )
+
+        def read_transaction():
+            conn = self.connection_factory()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        episode_ann,
+                        (vector, scope_id, semantic_space, vector),
+                    )
+                    episode_ann_rows = cur.fetchall()
+                    cur.execute(
+                        episode_coverage,
+                        (
+                            vector,
+                            scope_id,
+                            semantic_space,
+                            vector,
+                            1.0 - minimum_episode_similarity,
+                        ),
+                    )
+                    episode_coverage_rows = cur.fetchall()
+                    cur.execute(
+                        adaptive_ann,
+                        (vector, scope_id, semantic_space, vector),
+                    )
+                    cur.fetchall()
+                    cur.execute(
+                        adaptive_coverage,
+                        (
+                            vector,
+                            scope_id,
+                            semantic_space,
+                            ADAPTIVE_MEMORY_GOVERNANCE_REVISION,
+                            vector,
+                            1.0 - minimum_adaptive_similarity,
+                        ),
+                    )
+                    adaptive_rows = cur.fetchall()
+                merged = {row[0]: row for row in episode_ann_rows}
+                for row in episode_coverage_rows:
+                    merged[row[0]] = row
+                return (
+                    sorted(merged.values(), key=lambda row: float(row[10])),
+                    sorted(
+                        (tuple(row) for row in adaptive_rows),
+                        key=lambda row: float(row[28]),
+                    ),
+                )
+            except Exception:
+                rollback = getattr(conn, "rollback", None)
+                if callable(rollback):
+                    rollback()
+                raise
+            finally:
+                conn.close()
+
+        episode_rows, adaptive_rows = retry_cockroach_serialization(read_transaction)
+        recalled: list[RecalledEpisode] = []
+        for row in episode_rows:
+            distance = max(0.0, min(1.0, float(row[10])))
+            recalled.append(
+                RecalledEpisode(
+                    episode=DecisionEpisode(
+                        episode_id=row[0],
+                        scope_id=row[1],
+                        situation=row[2],
+                        strategy=Strategy(row[3]),
+                        outcome=Outcome(row[4]),
+                        effectiveness=float(row[5]),
+                        confidence=float(row[6]),
+                        evidence=row[7] or {},
+                        observed_at=row[8],
+                        recorded_at=row[9],
+                    ),
+                    similarity=1.0 - distance,
+                )
+            )
+        return recalled, [
+            _adaptive_memory_from_row(tuple(row)) for row in adaptive_rows
+        ]
+
     def recall_governed(
         self,
         *,

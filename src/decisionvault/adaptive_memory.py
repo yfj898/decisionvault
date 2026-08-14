@@ -13,6 +13,7 @@ from decisionvault.domain import DecisionEpisode, Outcome, Strategy
 
 
 ADAPTIVE_MEMORY_GOVERNANCE_REVISION = "governed-adaptive-memory-v1"
+PRODUCTION_ADAPTIVE_MIN_EFFECTIVE_CONFIDENCE = 0.30
 
 
 class MemoryType(StrEnum):
@@ -870,7 +871,7 @@ class MemoryConsolidationGovernor:
 class GovernedAdaptiveMemoryResolver:
     minimum_similarity: float = 0.40
     conflict_margin: float = 0.08
-    minimum_effective_confidence: float = 0.15
+    minimum_effective_confidence: float = PRODUCTION_ADAPTIVE_MIN_EFFECTIVE_CONFIDENCE
 
     def resolve(
         self,

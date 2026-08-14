@@ -351,6 +351,44 @@ def test_semantic_governed_recall_merges_ann_with_unbounded_threshold_coverage()
     assert len(recalled) == 1
 
 
+def test_semantic_bundled_recall_reuses_one_query_embedding_and_connection():
+    conn = FakeConnection(rows=[])
+    calls = []
+    connections = []
+
+    def semantic_query(text):
+        calls.append(text)
+        return [0.25, 0.75]
+
+    def connection_factory():
+        connections.append(True)
+        return conn
+
+    store = CockroachVectorMemoryStore(
+        connection_factory=connection_factory,
+        embedder=lambda _: [1.0, 0.0],
+        semantic_query_embedder=semantic_query,
+        semantic_embedding_space="test-space-v1",
+    )
+
+    recalled, adaptive = store.recall_governed_and_adaptive(
+        scope_id="scope-1",
+        situation="payment token stale",
+        minimum_episode_similarity=0.30,
+        minimum_adaptive_similarity=0.40,
+    )
+
+    assert recalled == []
+    assert adaptive == []
+    assert calls == ["payment token stale"]
+    assert len(connections) == 1
+    assert len(conn.cursor_value.executions) == 4
+    assert "LIMIT 32" in conn.cursor_value.executions[0][0]
+    assert "LIMIT" not in conn.cursor_value.executions[1][0]
+    assert "LIMIT 32" in conn.cursor_value.executions[2][0]
+    assert "LIMIT" not in conn.cursor_value.executions[3][0]
+
+
 def test_semantic_supersession_uses_atomic_current_head_compare_and_delete():
     now = datetime.now(timezone.utc)
     conn = ScriptedConnection(

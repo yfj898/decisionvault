@@ -130,6 +130,17 @@ expand/contract so runtime rights are not revoked until the new Lambda proves a
 distinct consolidator identity. Current v7 rollout evidence is recorded in
 `docs/evidence/GOVERNED_ADAPTIVE_MEMORY_V7.md`.
 
+The next optimization pass keeps those governance boundaries intact while
+reducing semantic-runtime work. Production L1+L3 recall now shares one query
+embedding and one CockroachDB connection per memory-enabled decision instead of
+duplicating both. A real CockroachDB+NVIDIA benchmark measured a 50% reduction in
+query-embedding requests, a 50% reduction in DB connections, and a 44.6% median
+memory-recall latency reduction. Long-term L3 influence is also calibrated by
+effective confidence: the production minimum is now 0.30 so aging knowledge can
+remain auditable without retaining execution influence until hard expiry.
+Evidence and calibration reports are in
+`docs/evidence/PERFORMANCE_COST_MEMORY_QUALITY_V1.md` and `reports/`.
+
 Verified competition integrations:
 
 - CockroachDB Distributed Vector Indexing

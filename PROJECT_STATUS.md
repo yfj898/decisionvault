@@ -15,7 +15,15 @@ Baseline:
 8 tests PASS
 
 Current local verification:
-200 tests PASS
+206 tests PASS
+Performance / cost / memory-quality calibration v1: LOCAL + REAL DATA PATH PASS
+Bundled L1+L3 semantic recall: 1 NVIDIA query embedding + 1 CockroachDB connection / decision while preserving 4 ANN+exact SQL queries
+Real 5× runtime benchmark: provider requests 2→1 (-50%) / DB connections 2→1 (-50%) / median recall 3161ms→1751ms (-44.6%)
+L1 threshold calibration: current 0.30 similarity / 0.12 signal / 0.08 conflict = 8/8; unchanged
+L3 threshold calibration: minimum effective confidence 0.15→0.30 / synthetic safety score 6/7→7/7
+LONG_TERM strong-memory influence window at calibrated 0.30: PRIVATE≈121d / TEAM≈197d / GLOBAL≈228d before 365d hard expiry
+Post-calibration real adaptive CockroachDB+NVIDIA smoke: 13/13 PASS / cleanup 0
+Post-calibration production semantic benchmark: 14/14 PASS
 Governed Adaptive Memory v7 local hardening: PASS
 Governed Adaptive Memory v7 production cutover: PASS
 Signing-key ID + retained verification keyring / legacy-keyless compatibility: PASS

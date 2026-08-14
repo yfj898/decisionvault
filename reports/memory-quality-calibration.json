@@ -1,0 +1,70 @@
+{
+  "calibration_contract": "memory-quality-v1",
+  "current": {
+    "adaptive": {
+      "conflict_margin": 0.08,
+      "minimum_effective_confidence": 0.15,
+      "minimum_similarity": 0.4
+    },
+    "adaptive_score": {
+      "benefit_failures": 0,
+      "passed_cases": 6,
+      "safety_failures": 1,
+      "total_cases": 7
+    },
+    "episodic": {
+      "conflict_margin": 0.08,
+      "minimum_signal": 0.12,
+      "minimum_similarity": 0.3
+    },
+    "episodic_score": {
+      "benefit_failures": 0,
+      "passed_cases": 8,
+      "safety_failures": 0,
+      "total_cases": 8
+    }
+  },
+  "long_term_influence_windows_days": {
+    "GLOBAL": {
+      "baseline_0_15": 365.0,
+      "calibrated_0_30": 227.74677120345433,
+      "hard_expiry_days": 365.0
+    },
+    "PRIVATE": {
+      "baseline_0_15": 303.4911148218433,
+      "calibrated_0_30": 120.99111482184334,
+      "hard_expiry_days": 365.0
+    },
+    "TEAM": {
+      "baseline_0_15": 365.0,
+      "calibrated_0_30": 196.73545844023232,
+      "hard_expiry_days": 365.0
+    }
+  },
+  "objective": "safety-weighted synthetic adversarial calibration",
+  "production_guardrail": "Do not change SQL-coupled evidence gates (success effectiveness 0.7, failure confidence 0.6, 90-day episodic freshness) from this report. Those require a coordinated SQL/resolver migration and live regression.",
+  "recommended": {
+    "adaptive": {
+      "conflict_margin": 0.08,
+      "minimum_effective_confidence": 0.3,
+      "minimum_similarity": 0.4
+    },
+    "adaptive_score": {
+      "benefit_failures": 0,
+      "passed_cases": 7,
+      "safety_failures": 0,
+      "total_cases": 7
+    },
+    "episodic": {
+      "conflict_margin": 0.08,
+      "minimum_signal": 0.12,
+      "minimum_similarity": 0.3
+    },
+    "episodic_score": {
+      "benefit_failures": 0,
+      "passed_cases": 8,
+      "safety_failures": 0,
+      "total_cases": 8
+    }
+  }
+}

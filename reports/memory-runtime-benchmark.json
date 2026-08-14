@@ -1,0 +1,30 @@
+{
+  "benchmark": "decisionvault-memory-runtime-v1",
+  "bundled": {
+    "database_connections": 5,
+    "database_connections_per_decision": 1.0,
+    "iterations": 5,
+    "latency_ms_max": 1783.748973859474,
+    "latency_ms_median": 1750.882375985384,
+    "latency_ms_min": 1668.6228909529746,
+    "latency_ms_p95": 1783.748973859474,
+    "provider_calls_per_decision": 1.0,
+    "provider_query_embedding_calls": 5
+  },
+  "database_connection_reduction": 0.5,
+  "legacy": {
+    "database_connections": 10,
+    "database_connections_per_decision": 2.0,
+    "iterations": 5,
+    "latency_ms_max": 3229.1145310737193,
+    "latency_ms_median": 3161.019208142534,
+    "latency_ms_min": 3068.858115002513,
+    "latency_ms_p95": 3229.1145310737193,
+    "provider_calls_per_decision": 2.0,
+    "provider_query_embedding_calls": 10
+  },
+  "median_latency_reduction": 0.44610194981566376,
+  "provider_request_reduction": 0.5,
+  "scope_contains_no_writes": true,
+  "semantic_embedding_space": "nvidia/nv-embedqa-e5-v5|revision=decisionvault-prod-r1|dim=1024|contract=query-passage-v1"
+}
