@@ -358,7 +358,8 @@ def calibrate_from_telemetry_rows(
     *,
     source: str = "AGENT_API",
     minimum_samples: int = 30,
-    minimum_success_retention: float = 0.90,
+    minimum_success_retention: float = 0.95,
+    maximum_harmful_rate: float = 0.05,
 ) -> TelemetryCalibrationSummary:
     # Pure default-policy requests with no recalled L1/L3 candidates say
     # nothing about memory thresholds and would otherwise dilute harmful rates
@@ -422,6 +423,7 @@ def calibrate_from_telemetry_rows(
         retention = (
             retained_successes / champion_successes if champion_successes else 1.0
         )
+        harmful_rate = retained_harmful / retained if retained else 0.0
         result = {
             "profile": name,
             "retained_samples": retained,
@@ -431,12 +433,14 @@ def calibrate_from_telemetry_rows(
             "suppressed_harmful": suppressed_harmful,
             "counterfactual_unobserved": counterfactual_unobserved,
             "success_retention": round(retention, 6),
+            "harmful_rate": round(harmful_rate, 6),
             "eligible": False,
         }
         result["eligible"] = bool(
             len(observed) >= minimum_samples
             and counterfactual_unobserved == 0
             and retention >= minimum_success_retention
+            and harmful_rate <= maximum_harmful_rate
             and retained_harmful <= champion_harmful
             and suppressed_harmful > 0
         )

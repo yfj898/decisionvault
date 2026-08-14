@@ -20,7 +20,8 @@ def main() -> int:
     parser.add_argument("--source", choices=("AGENT_API", "DEMO", "BENCHMARK"), default="AGENT_API")
     parser.add_argument("--lookback-days", type=int, default=90)
     parser.add_argument("--minimum-samples", type=int, default=30)
-    parser.add_argument("--minimum-success-retention", type=float, default=0.90)
+    parser.add_argument("--minimum-success-retention", type=float, default=0.95)
+    parser.add_argument("--maximum-harmful-rate", type=float, default=0.05)
     parser.add_argument(
         "--output",
         type=Path,
@@ -33,6 +34,8 @@ def main() -> int:
         raise SystemExit("minimum-samples must be positive")
     if not 0.0 <= args.minimum_success_retention <= 1.0:
         raise SystemExit("minimum-success-retention must be between 0 and 1")
+    if not 0.0 <= args.maximum_harmful_rate <= 1.0:
+        raise SystemExit("maximum-harmful-rate must be between 0 and 1")
 
     import psycopg
     from psycopg.conninfo import conninfo_to_dict
@@ -87,12 +90,14 @@ def main() -> int:
         source=args.source,
         minimum_samples=args.minimum_samples,
         minimum_success_retention=args.minimum_success_retention,
+        maximum_harmful_rate=args.maximum_harmful_rate,
     )
     payload = {
         "calibration": asdict(summary),
         "lookback_days": args.lookback_days,
         "minimum_samples": args.minimum_samples,
         "minimum_success_retention": args.minimum_success_retention,
+        "maximum_harmful_rate": args.maximum_harmful_rate,
         "decision_rows": len(rows),
         "labeled_outcomes": sum(row["outcome"] is not None for row in rows),
         "guardrails": [

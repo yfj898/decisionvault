@@ -1,0 +1,131 @@
+{
+  "calibration": {
+    "challengers": [
+      {
+        "counterfactual_unobserved": 0,
+        "eligible": false,
+        "harmful_rate": 0.0,
+        "profile": "adaptive_conflict_0_12",
+        "retained_harmful": 0,
+        "retained_samples": 1,
+        "retained_successes": 1,
+        "success_retention": 1.0,
+        "suppressed_harmful": 0,
+        "suppressed_successes": 0
+      },
+      {
+        "counterfactual_unobserved": 0,
+        "eligible": false,
+        "harmful_rate": 0.0,
+        "profile": "adaptive_effective_confidence_0_35",
+        "retained_harmful": 0,
+        "retained_samples": 1,
+        "retained_successes": 1,
+        "success_retention": 1.0,
+        "suppressed_harmful": 0,
+        "suppressed_successes": 0
+      },
+      {
+        "counterfactual_unobserved": 0,
+        "eligible": false,
+        "harmful_rate": 0.0,
+        "profile": "adaptive_effective_confidence_0_40",
+        "retained_harmful": 0,
+        "retained_samples": 1,
+        "retained_successes": 1,
+        "success_retention": 1.0,
+        "suppressed_harmful": 0,
+        "suppressed_successes": 0
+      },
+      {
+        "counterfactual_unobserved": 0,
+        "eligible": false,
+        "harmful_rate": 0.0,
+        "profile": "adaptive_similarity_0_45",
+        "retained_harmful": 0,
+        "retained_samples": 1,
+        "retained_successes": 1,
+        "success_retention": 1.0,
+        "suppressed_harmful": 0,
+        "suppressed_successes": 0
+      },
+      {
+        "counterfactual_unobserved": 0,
+        "eligible": false,
+        "harmful_rate": 0.0,
+        "profile": "adaptive_similarity_0_50",
+        "retained_harmful": 0,
+        "retained_samples": 1,
+        "retained_successes": 1,
+        "success_retention": 1.0,
+        "suppressed_harmful": 0,
+        "suppressed_successes": 0
+      },
+      {
+        "counterfactual_unobserved": 0,
+        "eligible": false,
+        "harmful_rate": 0.0,
+        "profile": "episodic_conflict_0_12",
+        "retained_harmful": 0,
+        "retained_samples": 1,
+        "retained_successes": 1,
+        "success_retention": 1.0,
+        "suppressed_harmful": 0,
+        "suppressed_successes": 0
+      },
+      {
+        "counterfactual_unobserved": 0,
+        "eligible": false,
+        "harmful_rate": 0.0,
+        "profile": "episodic_signal_0_16",
+        "retained_harmful": 0,
+        "retained_samples": 1,
+        "retained_successes": 1,
+        "success_retention": 1.0,
+        "suppressed_harmful": 0,
+        "suppressed_successes": 0
+      },
+      {
+        "counterfactual_unobserved": 0,
+        "eligible": false,
+        "harmful_rate": 0.0,
+        "profile": "episodic_similarity_0_45",
+        "retained_harmful": 0,
+        "retained_samples": 1,
+        "retained_successes": 1,
+        "success_retention": 1.0,
+        "suppressed_harmful": 0,
+        "suppressed_successes": 0
+      },
+      {
+        "counterfactual_unobserved": 0,
+        "eligible": false,
+        "harmful_rate": 0.0,
+        "profile": "episodic_similarity_0_50",
+        "retained_harmful": 0,
+        "retained_samples": 1,
+        "retained_successes": 1,
+        "success_retention": 1.0,
+        "suppressed_harmful": 0,
+        "suppressed_successes": 0
+      }
+    ],
+    "champion_harmful": 0,
+    "champion_successes": 1,
+    "observed_samples": 1,
+    "recommendation": "INSUFFICIENT_REAL_TELEMETRY",
+    "recommended_profile": null,
+    "source": "AGENT_API"
+  },
+  "decision_rows": 2,
+  "guardrails": [
+    "historical telemetry evaluates only monotone-stricter profiles",
+    "a different executable challenger strategy is COUNTERFACTUAL_UNOBSERVED",
+    "this report is recommendation-only and cannot mutate production thresholds"
+  ],
+  "labeled_outcomes": 2,
+  "lookback_days": 90,
+  "maximum_harmful_rate": 0.05,
+  "minimum_samples": 30,
+  "minimum_success_retention": 0.95
+}

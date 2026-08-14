@@ -91,6 +91,23 @@ def test_counterfactual_different_executable_strategy_is_never_auto_recommended(
     assert result.recommendation == "KEEP_CHAMPION"
 
 
+def test_challenger_harmful_rate_above_five_percent_is_not_eligible():
+    rows = []
+    shadow = {
+        "profile": {"name": "adaptive_effective_confidence_0_35"},
+        "same_strategy_as_champion": True,
+        "executable": True,
+    }
+    for _ in range(28):
+        rows.append(_row(outcome="SUCCESS", effectiveness=0.95, shadow=shadow))
+    for _ in range(2):
+        rows.append(_row(outcome="FAILED", effectiveness=0.1, shadow=shadow))
+    result = calibrate_from_telemetry_rows(rows, minimum_samples=30)
+    challenger = result.challengers[0]
+    assert challenger["harmful_rate"] > 0.05
+    assert challenger["eligible"] is False
+
+
 def test_stricter_shadow_can_be_recommended_only_after_real_labeled_evidence():
     rows = []
     for _ in range(27):
