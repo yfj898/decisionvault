@@ -84,10 +84,12 @@
       "family": "low_confidence_control",
       "memory_influenced": false,
       "passed": true,
-      "recalled_count": 0,
-      "recalled_producers": [],
+      "recalled_count": 1,
+      "recalled_producers": [
+        "uncertain-observer"
+      ],
       "resolution": "NO_SIGNAL",
-      "top_similarity": null
+      "top_similarity": 0.51404090906767
     },
     {
       "actual_action": "EXECUTE",
@@ -100,10 +102,12 @@
       "family": "low_effectiveness_control",
       "memory_influenced": false,
       "passed": true,
-      "recalled_count": 0,
-      "recalled_producers": [],
+      "recalled_count": 1,
+      "recalled_producers": [
+        "billing-observer-b"
+      ],
       "resolution": "NO_SIGNAL",
-      "top_similarity": null
+      "top_similarity": 0.4977123695011034
     },
     {
       "actual_action": "EXECUTE",
@@ -167,10 +171,10 @@
       "family": "stale_control",
       "memory_influenced": false,
       "passed": true,
-      "recalled_count": 0,
+      "recalled_count": 1,
       "recalled_producers": [],
       "resolution": "NO_SIGNAL",
-      "top_similarity": null
+      "top_similarity": 0.4459564864957106
     },
     {
       "actual_action": "EXECUTE",
@@ -220,10 +224,13 @@
       "family": "candidate_crowding_control",
       "memory_influenced": false,
       "passed": true,
-      "recalled_count": 2,
+      "recalled_count": 6,
       "recalled_producers": [
         "refresh-success-observer",
-        "refresh-failure-observer"
+        "refresh-failure-observer",
+        "noise-observer-0",
+        "noise-observer-2",
+        "noise-observer-3"
       ],
       "resolution": "CONFLICT_ABSTAIN",
       "top_similarity": 0.5699559118644654
@@ -239,7 +246,7 @@
       "family": "candidate_crowding_control",
       "memory_influenced": true,
       "passed": true,
-      "recalled_count": 1,
+      "recalled_count": 7,
       "recalled_producers": [
         "fresh-failure-observer"
       ],

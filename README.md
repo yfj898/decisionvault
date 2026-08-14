@@ -144,6 +144,16 @@ The immutable `decision_episodes` history remains the audit log; the
 `decision_memory_heads` table contains at most one active head per
 `(scope_id, producer_agent_id, strategy)` for production semantic recall.
 
+Production governed recall deliberately uses two query stages. The ANN fast path
+uses the DVI-compatible query shape containing only the exact scope prefix,
+`semantic_embedding_space`, vector ordering, and top-k. Governance lifecycle,
+outcome, revocation, and exact similarity-threshold coverage are evaluated in a
+second scope-exact query plus the deterministic resolver. This preserves both a
+real CockroachDB `vector search` node in the production path and completeness
+beyond the ANN top-k boundary. `MemoryAuditorAgent` imports the same SQL builders
+used by `CockroachVectorMemoryStore`, so its ANN/coverage EXPLAIN requests cannot
+silently drift to a simplified query contract.
+
 ## Phase 5 — Bounded model advisor
 
 DecisionVault keeps model output outside the strategy authority boundary. The

@@ -13,6 +13,7 @@ from decisionvault.domain import (
     Strategy,
 )
 from decisionvault.memory.retry import retry_cockroach_serialization
+from decisionvault.memory.governed_query import semantic_ann_sql, semantic_coverage_sql
 
 
 Vector = Sequence[float]
@@ -32,6 +33,12 @@ class MemoryRevocationResult:
     episode_id: str
     producer_agent_id: str
     idempotent_replay: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ProducerRetirementResult:
+    retired_heads: int
+    producer_agent_ids: tuple[str, ...]
 
 
 def _vector_literal(vector: Vector) -> str:
@@ -345,6 +352,72 @@ class CockroachVectorMemoryStore:
 
         return retry_cockroach_serialization(revoke_transaction)
 
+    def retire_untrusted_heads(
+        self,
+        *,
+        active_producer_agent_ids: set[str] | frozenset[str],
+        reason: str,
+    ) -> ProducerRetirementResult:
+        """Retire current heads owned by producers absent from the active grants."""
+
+        active = {item.strip() for item in active_producer_agent_ids if item.strip()}
+
+        def retire_transaction() -> ProducerRetirementResult:
+            conn = self.connection_factory()
+            retired = 0
+            retired_producers: list[str] = []
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT scope_id, episode_id::STRING, producer_agent_id
+                        FROM decision_memory_heads
+                        """
+                    )
+                    rows = cur.fetchall()
+                    for scope_id, episode_id, producer_agent_id in rows:
+                        producer = str(producer_agent_id)
+                        if producer in active:
+                            continue
+                        cur.execute(
+                            """
+                            DELETE FROM decision_memory_heads
+                            WHERE scope_id = %s
+                              AND producer_agent_id = %s
+                              AND episode_id = %s::UUID
+                            RETURNING episode_id::STRING
+                            """,
+                            (scope_id, producer, episode_id),
+                        )
+                        if cur.fetchone() is None:
+                            continue
+                        cur.execute(
+                            """
+                            INSERT INTO decision_memory_revocations (
+                                revocation_id, scope_id, episode_id,
+                                producer_agent_id, reason
+                            ) VALUES (%s::UUID, %s, %s::UUID, %s, %s)
+                            ON CONFLICT (scope_id, episode_id) DO NOTHING
+                            """,
+                            (str(uuid4()), scope_id, episode_id, producer, reason),
+                        )
+                        retired += 1
+                        retired_producers.append(producer)
+                conn.commit()
+                return ProducerRetirementResult(
+                    retired_heads=retired,
+                    producer_agent_ids=tuple(dict.fromkeys(retired_producers)),
+                )
+            except Exception:
+                rollback = getattr(conn, "rollback", None)
+                if callable(rollback):
+                    rollback()
+                raise
+            finally:
+                conn.close()
+
+        return retry_cockroach_serialization(retire_transaction)
+
     def recall(
         self,
         *,
@@ -477,45 +550,17 @@ class CockroachVectorMemoryStore:
         if self.semantic_query_embedder is not None:
             vector = _vector_literal(self.semantic_query_embedder(situation))
             semantic_space = (self.semantic_embedding_space or "").strip()
-            admissible = """
-                  AND NOT EXISTS (
-                    SELECT 1 FROM decision_memory_revocations r
-                    WHERE r.scope_id = h.scope_id AND r.episode_id = h.episode_id
-                  )
-                  AND COALESCE(upper(h.evidence->>'memory_status'), 'ACTIVE') <> 'REVOKED'
-                  AND (
-                    COALESCE(lower(h.evidence->>'pinned'), 'false') = 'true'
-                    OR h.created_at >= now() - INTERVAL '90 days'
-                  )
-                  AND (
-                    (h.outcome = 'SUCCESS' AND h.effectiveness >= 0.7)
-                    OR (h.outcome = 'FAILED' AND h.confidence >= 0.6)
-                  )
-            """
-            ann_sql = f"""
-                SELECT h.episode_id::STRING, h.scope_id, h.situation, h.strategy,
-                       h.outcome, h.effectiveness, h.confidence, h.evidence,
-                       h.created_at,
-                       h.semantic_embedding <=> %s::VECTOR AS cosine_distance
-                FROM decision_memory_heads h
-                WHERE h.scope_id = %s
-                  AND h.semantic_embedding_space = %s
-                  {admissible}
-                ORDER BY h.semantic_embedding <=> %s::VECTOR
-                LIMIT 32
-            """
-            coverage_sql = f"""
-                SELECT h.episode_id::STRING, h.scope_id, h.situation, h.strategy,
-                       h.outcome, h.effectiveness, h.confidence, h.evidence,
-                       h.created_at,
-                       h.semantic_embedding <=> %s::VECTOR AS cosine_distance
-                FROM decision_memory_heads h
-                WHERE h.scope_id = %s
-                  AND h.semantic_embedding_space = %s
-                  {admissible}
-                  AND h.semantic_embedding <=> %s::VECTOR <= %s
-                ORDER BY cosine_distance
-            """
+            ann_sql = semantic_ann_sql(
+                vector_expr="%s::VECTOR",
+                scope_expr="%s",
+                space_expr="%s",
+            )
+            coverage_sql = semantic_coverage_sql(
+                vector_expr="%s::VECTOR",
+                scope_expr="%s",
+                space_expr="%s",
+                max_distance_expr="%s",
+            )
 
             def semantic_read_transaction():
                 conn = self.connection_factory()

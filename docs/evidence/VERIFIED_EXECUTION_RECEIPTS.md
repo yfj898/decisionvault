@@ -64,7 +64,11 @@ decision_episodes_execution_receipt_uidx
 The API checks for an existing receipt before writing and the database unique
 index remains the race-safe final boundary. Replaying a valid receipt returns the
 original episode with `idempotent_replay=true` rather than creating duplicate
-memory.
+memory. Receipt TTL applies before a **new** record is accepted. For an already
+persisted receipt ID, DecisionVault first verifies the signed agent/scope/payload
+contract without the issuance-age gate, returns the existing episode if found,
+and only applies the normal TTL when no prior record exists. This allows delayed
+network/queue retries to remain idempotent beyond the 15-minute issuance window.
 
 ## Live AWS + CockroachDB verification
 

@@ -5,7 +5,9 @@ import json
 from typing import Any
 from urllib.request import Request, urlopen
 
+from decisionvault.agent.memory_governance import PRODUCTION_SEMANTIC_MIN_SIMILARITY
 from decisionvault.memory.embedding import deterministic_text_embedding
+from decisionvault.memory.governed_query import semantic_ann_sql, semantic_coverage_sql
 
 
 MCP_PROTOCOL_VERSION = "2025-06-18"
@@ -133,6 +135,7 @@ class MemoryAuditResult:
     producer_provenance_visible: bool
     vector_plan_visible: bool
     vector_index_visible: bool
+    coverage_plan_visible: bool = True
 
     @property
     def passed(self) -> bool:
@@ -144,6 +147,7 @@ class MemoryAuditResult:
                 self.producer_provenance_visible,
                 self.vector_plan_visible,
                 self.vector_index_visible,
+                self.coverage_plan_visible,
             )
         )
 
@@ -214,20 +218,46 @@ class MemoryAuditorAgent:
             if semantic_mode
             else "decision_episodes_scope_embedding_vec_idx"
         )
+        if semantic_mode:
+            vector_expr = f"'{vector}'::VECTOR"
+            production_ann_query = semantic_ann_sql(
+                vector_expr=vector_expr,
+                scope_expr=scope_literal,
+                space_expr=_sql_literal(str(semantic_embedding_space)),
+            )
+        else:
+            production_ann_query = (
+                f"SELECT episode_id FROM {table} "
+                f"WHERE scope_id = {scope_literal}{space_clause} "
+                f"ORDER BY {column} <=> '{vector}'::VECTOR LIMIT 5"
+            )
         explain_payload = self.client.call_tool(
             "explain_query",
             {
                 "database": self.database,
-                "query": (
-                    f"SELECT episode_id FROM {table} "
-                    f"WHERE scope_id = {scope_literal}{space_clause} "
-                    f"ORDER BY {column} <=> '{vector}'::VECTOR LIMIT 5"
-                ),
+                "query": production_ann_query,
             },
         )
         explain_text = _response_text(explain_payload).lower()
         vector_plan_visible = "vector search" in explain_text
         vector_index_visible = index_name in explain_text
+        coverage_plan_visible = True
+        if semantic_mode:
+            coverage_query = semantic_coverage_sql(
+                vector_expr=f"'{vector}'::VECTOR",
+                scope_expr=scope_literal,
+                space_expr=_sql_literal(str(semantic_embedding_space)),
+                max_distance_expr=str(1.0 - PRODUCTION_SEMANTIC_MIN_SIMILARITY),
+            )
+            coverage_payload = self.client.call_tool(
+                "explain_query",
+                {"database": self.database, "query": coverage_query},
+            )
+            coverage_text = _response_text(coverage_payload).lower()
+            coverage_plan_visible = (
+                "decision_memory_heads" in coverage_text
+                and ("scan" in coverage_text or "filter" in coverage_text)
+            )
         return MemoryAuditResult(
             server_initialized=server_initialized,
             required_tools_present=required_tools_present,
@@ -235,4 +265,5 @@ class MemoryAuditorAgent:
             producer_provenance_visible=producer_provenance_visible,
             vector_plan_visible=vector_plan_visible,
             vector_index_visible=vector_index_visible,
+            coverage_plan_visible=coverage_plan_visible,
         )

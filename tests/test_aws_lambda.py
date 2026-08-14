@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 import json
 
 import decisionvault.aws_lambda as aws_lambda
 from decisionvault.agent.auth import token_digest
 from decisionvault.domain import Decision, DecisionAction, Strategy
+from decisionvault.execution import issue_sandbox_receipt
 from decisionvault.memory.cockroach import SupersessionWriteConflict
 
 
@@ -629,3 +631,124 @@ def test_revoke_validates_uuid_and_reason_before_store_call(monkeypatch):
         assert "valid UUID" in str(exc)
     else:
         raise AssertionError("invalid revoke UUID should fail")
+
+
+def test_execute_removes_advisor_from_critical_path(monkeypatch):
+    class AgentWithAdvisor:
+        def __init__(self):
+            self.advisor = object()
+
+        def decide(self, *, scope_id: str, situation: str) -> Decision:
+            assert self.advisor is None
+            return Decision(
+                strategy=Strategy.GENERIC_RETRY,
+                reason="advisor-free execution policy",
+            )
+
+    monkeypatch.setenv(
+        "EXECUTION_RECEIPT_SECRET", "test-execution-receipt-secret-123"
+    )
+    monkeypatch.setattr(
+        aws_lambda,
+        "_build_agent",
+        lambda *, memory_enabled, agent_id="recovery-planner": AgentWithAdvisor(),
+    )
+    payload = aws_lambda._execute(
+        {
+            "scope_id": "demo",
+            "situation": "payment retry",
+            "strategy": "GENERIC_RETRY",
+        },
+        agent_id="executor-a",
+    )
+    assert payload["execution_receipt"]["strategy"] == "GENERIC_RETRY"
+
+
+def test_request_body_and_situation_limits_fail_closed(monkeypatch):
+    token = _configure_agent(monkeypatch)
+    too_long = "x" * (aws_lambda.MAX_SITUATION_CHARS + 1)
+    response = aws_lambda.lambda_handler(
+        {
+            "requestContext": {"http": {"method": "POST"}},
+            "rawPath": "/decide",
+            "headers": {"X-DecisionVault-Agent-Token": token},
+            "body": json.dumps({"scope_id": "demo", "situation": too_long}),
+        },
+        None,
+    )
+    assert response["statusCode"] == 400
+
+    huge = "x" * (aws_lambda.MAX_REQUEST_BODY_BYTES + 1)
+    response = aws_lambda.lambda_handler(
+        {
+            "requestContext": {"http": {"method": "POST"}},
+            "rawPath": "/decide",
+            "body": huge,
+        },
+        None,
+    )
+    assert response["statusCode"] == 400
+
+
+def test_record_replay_remains_idempotent_after_receipt_ttl(monkeypatch):
+    secret = "test-execution-receipt-secret-123"
+    monkeypatch.setenv("EXECUTION_RECEIPT_SECRET", secret)
+    receipt = issue_sandbox_receipt(
+        scope_id="demo",
+        agent_id="executor-a",
+        situation="stale token",
+        strategy=Strategy.GENERIC_RETRY,
+        scenario="stale_payment_token",
+        signing_secret=secret,
+        now=datetime.now(timezone.utc) - timedelta(minutes=20),
+    )
+    monkeypatch.setattr(
+        aws_lambda,
+        "_episode_by_receipt",
+        lambda receipt_id: {
+            "episode_id": "episode-existing",
+            "strategy": "GENERIC_RETRY",
+            "outcome": "FAILED",
+            "effectiveness": 0.1,
+            "producer_agent_id": "executor-a",
+            "execution_receipt_id": receipt_id,
+            "idempotent_replay": True,
+        },
+    )
+    result = aws_lambda._record(
+        {"scope_id": "demo", "execution_receipt": receipt},
+        agent_id="executor-a",
+    )
+    assert result["episode_id"] == "episode-existing"
+    assert result["idempotent_replay"] is True
+
+
+def test_security_reconciliation_retires_absent_producers(monkeypatch):
+    class Store:
+        def __init__(self):
+            self.calls = []
+
+        def retire_untrusted_heads(self, **kwargs):
+            self.calls.append(kwargs)
+
+    store = Store()
+    monkeypatch.setenv("DECISIONVAULT_SECRET_ARN", "arn:test")
+    monkeypatch.setattr(aws_lambda, "hydrate_runtime_secrets", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        aws_lambda,
+        "_agent_grants",
+        lambda: {
+            "a" * 64: aws_lambda.AgentGrant(
+                agent_id="active-agent",
+                scope_prefixes=("demo",),
+                permissions=frozenset({"decide"}),
+                trust=0.8,
+            )
+        },
+    )
+    monkeypatch.setattr(aws_lambda, "_build_memory_store", lambda: store)
+    aws_lambda._SECURITY_RECONCILE_AT = 0.0
+    aws_lambda._refresh_runtime_security_state(force=True)
+    active = store.calls[0]["active_producer_agent_ids"]
+    assert "active-agent" in active
+    assert "recovery-observer" in active

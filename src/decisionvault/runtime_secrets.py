@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from functools import lru_cache
 import json
 import os
+import time
 
 
 SECRET_KEYS = frozenset(
@@ -16,9 +16,24 @@ SECRET_KEYS = frozenset(
 )
 
 
-@lru_cache(maxsize=1)
-def load_runtime_secrets() -> dict[str, str]:
-    """Load the single DecisionVault runtime secret once per warm process.
+_SECRET_CACHE: dict[str, str] | None = None
+_SECRET_CACHE_ARN: str | None = None
+_SECRET_CACHE_AT = 0.0
+
+
+def _secret_refresh_seconds() -> float:
+    return max(1.0, float(os.getenv("SECRET_REFRESH_SECONDS", "30")))
+
+
+def _clear_secret_cache() -> None:
+    global _SECRET_CACHE, _SECRET_CACHE_ARN, _SECRET_CACHE_AT
+    _SECRET_CACHE = None
+    _SECRET_CACHE_ARN = None
+    _SECRET_CACHE_AT = 0.0
+
+
+def load_runtime_secrets(*, force: bool = False) -> dict[str, str]:
+    """Load the runtime secret with a bounded warm-process refresh interval.
 
     Local development may continue to supply the individual values directly in
     the process environment. The hosted Lambda supplies only
@@ -29,6 +44,16 @@ def load_runtime_secrets() -> dict[str, str]:
     secret_arn = os.getenv("DECISIONVAULT_SECRET_ARN", "").strip()
     if not secret_arn:
         return {}
+
+    global _SECRET_CACHE, _SECRET_CACHE_ARN, _SECRET_CACHE_AT
+    now = time.monotonic()
+    if (
+        not force
+        and _SECRET_CACHE is not None
+        and _SECRET_CACHE_ARN == secret_arn
+        and now - _SECRET_CACHE_AT < _secret_refresh_seconds()
+    ):
+        return dict(_SECRET_CACHE)
 
     try:
         import boto3
@@ -54,11 +79,22 @@ def load_runtime_secrets() -> dict[str, str]:
             "DecisionVault runtime secret is missing required keys: "
             + ", ".join(sorted(missing))
         )
+    _SECRET_CACHE = dict(values)
+    _SECRET_CACHE_ARN = secret_arn
+    _SECRET_CACHE_AT = now
     return values
 
 
-def hydrate_runtime_secrets() -> None:
-    """Populate only missing sensitive process values from Secrets Manager."""
+def hydrate_runtime_secrets(*, force: bool = False) -> None:
+    """Refresh managed sensitive values in the current warm process."""
 
-    for key, value in load_runtime_secrets().items():
-        os.environ.setdefault(key, value)
+    managed = bool(os.getenv("DECISIONVAULT_SECRET_ARN", "").strip())
+    for key, value in load_runtime_secrets(force=force).items():
+        if managed:
+            os.environ[key] = value
+        else:
+            os.environ.setdefault(key, value)
+
+
+# Preserve the old test/operator cache-reset seam while using a TTL cache.
+load_runtime_secrets.cache_clear = _clear_secret_cache  # type: ignore[attr-defined]

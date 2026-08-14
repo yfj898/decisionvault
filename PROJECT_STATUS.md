@@ -15,7 +15,19 @@ Baseline:
 8 tests PASS
 
 Current local verification:
-107 tests PASS
+113 tests PASS
+Production hardening v4: PASS (real production DVI query / shared MCP audit SQL / hot secret refresh / compromised-producer retirement / fail-closed readiness / advisor-free execution / input bounds / long-term receipt replay)
+Real CockroachDB production ANN EXPLAIN: `vector search` + `decision_memory_heads_scope_space_semantic_vec_idx` PASS
+Production exact-threshold coverage remains unbounded and scope-scanned for correctness: PASS
+MCP auditor now imports the same production ANN + coverage SQL builders: PASS
+Managed MCP live re-run in this pass: NOT RUN (no MCP API key / cluster ID in current local environment; historical Phase 4 evidence retained)
+Secrets Manager warm-process refresh TTL: PASS (default 30s; deterministic refresh regression)
+Unknown/retired producer reconciliation: hosted head remaining=0 / revocation audit=1
+Readiness security controls: agent auth / receipt signing / demo auth / sandbox all PASS
+Hosted `/execute` advisor removed from critical path: model provider/explanation both null
+Application request bounds: oversize situation HTTP 400
+Recorded receipt replay beyond 15-minute issuance TTL: HTTP 201 / idempotent replay PASS
+Post-hardening-v4 production semantic benchmark: 14/14 PASS
 Boundary hardening v3: PASS (server-owned sandbox scenario / mandatory memory governance / event-time head ordering / backend-independent revoke / unbounded governance coverage)
 Caller-supplied `/execute` scenario rejected: PASS
 Caller-supplied `/decide memory_enabled=false` rejected: PASS

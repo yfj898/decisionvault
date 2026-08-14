@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import types
 
@@ -102,8 +103,28 @@ class FailingEmbedder:
         raise RuntimeError("embedding provider unavailable")
 
 
+def _configure_ready_security(monkeypatch):
+    monkeypatch.setenv(
+        "AGENT_AUTH_JSON",
+        json.dumps(
+            {
+                "a" * 64: {
+                    "agent_id": "planner",
+                    "scope_prefixes": ["demo"],
+                    "permissions": ["decide"],
+                    "trust": 0.8,
+                }
+            }
+        ),
+    )
+    monkeypatch.setenv("EXECUTION_RECEIPT_SECRET", "receipt-secret-value")
+    monkeypatch.setenv("DEMO_API_TOKEN", "demo-token")
+    monkeypatch.setenv("EXECUTION_SANDBOX_SCENARIO", "stale_payment_token")
+
+
 def test_readiness_checks_secret_database_and_embedding(monkeypatch):
     aws_lambda._READINESS_CACHE = None
+    _configure_ready_security(monkeypatch)
     monkeypatch.setattr(aws_lambda, "hydrate_runtime_secrets", lambda: None)
     monkeypatch.setattr(
         aws_lambda,
@@ -124,6 +145,7 @@ def test_readiness_checks_secret_database_and_embedding(monkeypatch):
 
 def test_readiness_fails_closed_when_semantic_embedding_is_unavailable(monkeypatch):
     aws_lambda._READINESS_CACHE = None
+    _configure_ready_security(monkeypatch)
     monkeypatch.setattr(aws_lambda, "hydrate_runtime_secrets", lambda: None)
     monkeypatch.setattr(
         aws_lambda,
@@ -141,6 +163,28 @@ def test_readiness_fails_closed_when_semantic_embedding_is_unavailable(monkeypat
     assert payload["semantic_embedding"] is False
     assert payload["advisor_required_for_readiness"] is False
     assert payload["errors"]
+
+
+def test_readiness_fails_closed_on_security_control_misconfiguration(monkeypatch):
+    aws_lambda._READINESS_CACHE = None
+    monkeypatch.setattr(aws_lambda, "hydrate_runtime_secrets", lambda: None)
+    monkeypatch.setattr(
+        aws_lambda,
+        "psycopg_connection_factory",
+        lambda: (lambda: ReadyConnection()),
+    )
+    monkeypatch.setattr(aws_lambda, "NvidiaSemanticEmbedder", ReadyEmbedder)
+    monkeypatch.setenv("NVIDIA_API_KEY", "test")
+    monkeypatch.setenv("AGENT_AUTH_JSON", "not-json")
+    monkeypatch.setenv("EXECUTION_RECEIPT_SECRET", "short")
+    monkeypatch.setenv("DEMO_API_TOKEN", "")
+
+    status, payload = aws_lambda._readiness()
+
+    assert status == 503
+    assert payload["agent_auth"] is False
+    assert payload["execution_receipt_signing"] is False
+    assert payload["demo_auth"] is False
 
 
 def test_readiness_cache_avoids_repeated_external_probe(monkeypatch):

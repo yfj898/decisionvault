@@ -76,7 +76,15 @@ cleanup_rows=(0, 0)
 
 ## Boundary
 
-This evidence shows managed secret storage and a resource-scoped runtime read
-permission. It does not claim automated secret rotation. Rotation remains an
-operational follow-up and should be added if the application becomes a persistent
-production service rather than a time-bounded hackathon deployment.
+Managed values are now refreshed in warm Lambda processes on a bounded TTL
+(`SECRET_REFRESH_SECONDS`, default 30 seconds) and replace the stale managed
+process value rather than using `setdefault`. Agent grant reconciliation runs on
+a similar bounded interval before authenticated POST handling: current heads
+owned by producers absent from the active grant set are removed and a revocation
+audit event is appended. This bounds credential-revocation latency in warm
+containers and prevents a removed producer's current memory head from continuing
+to influence decisions.
+
+This is application-level bounded refresh/reconciliation, not a claim of AWS
+Secrets Manager automatic rotation scheduling or enterprise incident-response
+orchestration.

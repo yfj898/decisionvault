@@ -61,6 +61,13 @@ SECURITY_HEADERS = {
     ),
 }
 _READINESS_CACHE: tuple[float, tuple[int, dict[str, Any]]] | None = None
+_SECURITY_RECONCILE_AT = 0.0
+MAX_REQUEST_BODY_BYTES = 16 * 1024
+MAX_SCOPE_ID_CHARS = 256
+MAX_SITUATION_CHARS = 4096
+INTERNAL_PRODUCER_AGENT_IDS = frozenset(
+    {"recovery-observer", "recovery-observer-a", "recovery-observer-b"}
+)
 
 
 class SupersessionConflict(Exception):
@@ -110,13 +117,35 @@ def _request_body(event: dict[str, Any]) -> dict[str, Any]:
     if body in (None, ""):
         return {}
     if event.get("isBase64Encoded"):
-        body = base64.b64decode(body).decode("utf-8")
+        decoded = base64.b64decode(body)
+        if len(decoded) > MAX_REQUEST_BODY_BYTES:
+            raise ValueError("request body is too large")
+        body = decoded.decode("utf-8")
     if isinstance(body, dict):
+        if len(json.dumps(body, ensure_ascii=False).encode("utf-8")) > MAX_REQUEST_BODY_BYTES:
+            raise ValueError("request body is too large")
         return body
+    if len(str(body).encode("utf-8")) > MAX_REQUEST_BODY_BYTES:
+        raise ValueError("request body is too large")
     parsed = json.loads(body)
     if not isinstance(parsed, dict):
         raise ValueError("request body must be a JSON object")
     return parsed
+
+
+def _bounded_text(
+    value: Any,
+    *,
+    field: str,
+    maximum_chars: int,
+    required: bool = True,
+) -> str:
+    text = str(value or "").strip()
+    if required and not text:
+        raise ValueError(f"{field} is required")
+    if len(text) > maximum_chars:
+        raise ValueError(f"{field} must be at most {maximum_chars} characters")
+    return text
 
 
 def _demo_authorized(event: dict[str, Any]) -> bool:
@@ -209,6 +238,31 @@ def _producer_trust_registry() -> dict[str, float]:
         }
     )
     return registry
+
+
+def _refresh_runtime_security_state(*, force: bool = False) -> None:
+    """Refresh managed secrets and retire heads from no-longer-authorized producers."""
+
+    if force:
+        hydrate_runtime_secrets(force=True)
+    else:
+        hydrate_runtime_secrets()
+    if not os.getenv("DECISIONVAULT_SECRET_ARN", "").strip():
+        return
+    global _SECURITY_RECONCILE_AT
+    now = time.monotonic()
+    interval = max(1.0, float(os.getenv("SECURITY_RECONCILE_SECONDS", "30")))
+    if not force and now - _SECURITY_RECONCILE_AT < interval:
+        return
+    grants = _agent_grants()
+    active = {grant.agent_id for grant in grants.values()} | set(
+        INTERNAL_PRODUCER_AGENT_IDS
+    )
+    _build_memory_store().retire_untrusted_heads(
+        active_producer_agent_ids=active,
+        reason="producer authorization retired by runtime grant reconciliation",
+    )
+    _SECURITY_RECONCILE_AT = now
 
 
 def _execution_secret() -> str:
@@ -331,6 +385,10 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
     database_ok = False
     semantic_embedding_ok = False
     governance_schema_ok = False
+    agent_auth_ok = False
+    receipt_signing_ok = False
+    demo_auth_ok = False
+    sandbox_config_ok = False
     configured_embedding_space: str | None = None
     errors: list[str] = []
 
@@ -341,6 +399,32 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
         errors.append(f"secrets:{type(exc).__name__}")
 
     if secret_ok:
+        try:
+            grants = _agent_grants()
+            if not grants:
+                raise ValueError("no agent grants configured")
+            agent_auth_ok = True
+        except Exception as exc:
+            errors.append(f"agent_auth:{type(exc).__name__}")
+
+        try:
+            _execution_secret()
+            receipt_signing_ok = True
+        except Exception as exc:
+            errors.append(f"execution_receipt:{type(exc).__name__}")
+
+        demo_auth_ok = bool(os.getenv("DEMO_API_TOKEN", "").strip())
+        if not demo_auth_ok:
+            errors.append("demo_auth:MissingToken")
+
+        try:
+            configured_sandbox_scenario(
+                os.getenv("EXECUTION_SANDBOX_SCENARIO", "stale_payment_token")
+            )
+            sandbox_config_ok = True
+        except Exception as exc:
+            errors.append(f"execution_sandbox:{type(exc).__name__}")
+
         try:
             conn = psycopg_connection_factory()()
             try:
@@ -380,7 +464,18 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
         except Exception as exc:
             errors.append(f"semantic_embedding:{type(exc).__name__}")
 
-    ready = secret_ok and database_ok and governance_schema_ok and semantic_embedding_ok
+    ready = all(
+        (
+            secret_ok,
+            database_ok,
+            governance_schema_ok,
+            semantic_embedding_ok,
+            agent_auth_ok,
+            receipt_signing_ok,
+            demo_auth_ok,
+            sandbox_config_ok,
+        )
+    )
     return (
         200 if ready else 503,
         {
@@ -391,6 +486,10 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
             "memory_governance_schema": governance_schema_ok,
             "semantic_embedding": semantic_embedding_ok,
             "semantic_embedding_space": configured_embedding_space,
+            "agent_auth": agent_auth_ok,
+            "execution_receipt_signing": receipt_signing_ok,
+            "demo_auth": demo_auth_ok,
+            "execution_sandbox": sandbox_config_ok,
             "advisor_required_for_readiness": False,
             "errors": errors,
         },
@@ -409,10 +508,14 @@ def _readiness() -> tuple[int, dict[str, Any]]:
 
 
 def _decide(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
-    scope_id = str(body.get("scope_id", "")).strip()
-    situation = str(body.get("situation", "")).strip()
-    if not scope_id or not situation:
-        raise ValueError("scope_id and situation are required")
+    scope_id = _bounded_text(
+        body.get("scope_id"), field="scope_id", maximum_chars=MAX_SCOPE_ID_CHARS
+    )
+    situation = _bounded_text(
+        body.get("situation"),
+        field="situation",
+        maximum_chars=MAX_SITUATION_CHARS,
+    )
 
     if "memory_enabled" in body:
         raise ValueError(
@@ -426,20 +529,27 @@ def _decide(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
 
 
 def _execute(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
-    scope_id = str(body.get("scope_id", "")).strip()
-    situation = str(body.get("situation", "")).strip()
-    if not scope_id or not situation:
-        raise ValueError("scope_id and situation are required")
+    scope_id = _bounded_text(
+        body.get("scope_id"), field="scope_id", maximum_chars=MAX_SCOPE_ID_CHARS
+    )
+    situation = _bounded_text(
+        body.get("situation"),
+        field="situation",
+        maximum_chars=MAX_SITUATION_CHARS,
+    )
     if "scenario" in body:
         raise ValueError("scenario is server-controlled and must not be supplied")
     scenario = configured_sandbox_scenario(
         os.getenv("EXECUTION_SANDBOX_SCENARIO", "stale_payment_token")
     )
     strategy = Strategy(str(body.get("strategy", "")))
-    current_decision = _build_agent(
+    policy_agent = _build_agent(
         memory_enabled=True,
         agent_id=agent_id,
-    ).decide(scope_id=scope_id, situation=situation)
+    )
+    if hasattr(policy_agent, "advisor"):
+        policy_agent.advisor = None
+    current_decision = policy_agent.decide(scope_id=scope_id, situation=situation)
     if not current_decision.executable or current_decision.strategy is None:
         raise ExecutionPolicyConflict(
             "current deterministic decision abstains; execution is blocked"
@@ -661,9 +771,9 @@ def _governance_demo() -> dict[str, Any]:
 
 
 def _record(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
-    scope_id = str(body.get("scope_id", "")).strip()
-    if not scope_id:
-        raise ValueError("scope_id is required")
+    scope_id = _bounded_text(
+        body.get("scope_id"), field="scope_id", maximum_chars=MAX_SCOPE_ID_CHARS
+    )
     forbidden = {
         key
         for key in ("agent_id", "situation", "strategy", "outcome", "effectiveness", "confidence")
@@ -678,10 +788,21 @@ def _record(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
         signing_secret=_execution_secret(),
         expected_scope_id=scope_id,
         expected_agent_id=agent_id,
+        ttl_seconds=None,
     )
+    if len(receipt.situation) > MAX_SITUATION_CHARS:
+        raise ValueError(
+            f"execution receipt situation must be at most {MAX_SITUATION_CHARS} characters"
+        )
     existing = _episode_by_receipt(receipt.receipt_id)
     if existing is not None:
         return existing
+    receipt = verify_execution_receipt(
+        body.get("execution_receipt"),
+        signing_secret=_execution_secret(),
+        expected_scope_id=scope_id,
+        expected_agent_id=agent_id,
+    )
 
     evidence: dict[str, str] = {
         "execution_receipt_id": receipt.receipt_id,
@@ -735,11 +856,13 @@ def _record(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
 
 
 def _revoke(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
-    scope_id = str(body.get("scope_id", "")).strip()
+    scope_id = _bounded_text(
+        body.get("scope_id"), field="scope_id", maximum_chars=MAX_SCOPE_ID_CHARS
+    )
     episode_id = str(body.get("episode_id", "")).strip()
     reason = str(body.get("reason", "")).strip()
-    if not scope_id or not episode_id or not reason:
-        raise ValueError("scope_id, episode_id, and reason are required")
+    if not episode_id or not reason:
+        raise ValueError("episode_id and reason are required")
     if len(reason) > 500:
         raise ValueError("revocation reason must be at most 500 characters")
     try:
@@ -796,15 +919,13 @@ def _handle_request(event: dict[str, Any], _context: Any) -> dict[str, Any]:
             status_code, payload = _readiness()
             return _json_response(status_code, payload)
 
-        if method == "POST":
-            hydrate_runtime_secrets()
         body = _request_body(event)
+        if method == "POST":
+            _refresh_runtime_security_state()
         if method == "POST" and path == "/decide":
-            scope_id = str(body.get("scope_id", "")).strip()
-            if not scope_id:
-                return _json_response(
-                    400, {"error": "bad_request", "detail": "scope_id is required"}
-                )
+            scope_id = _bounded_text(
+                body.get("scope_id"), field="scope_id", maximum_chars=MAX_SCOPE_ID_CHARS
+            )
             grant = _authenticate_request_agent(
                 event, permission="decide", scope_id=scope_id
             )
@@ -819,11 +940,9 @@ def _handle_request(event: dict[str, Any], _context: Any) -> dict[str, Any]:
             )
             return _json_response(200, _decide(body, agent_id=grant.agent_id))
         if method == "POST" and path == "/execute":
-            scope_id = str(body.get("scope_id", "")).strip()
-            if not scope_id:
-                return _json_response(
-                    400, {"error": "bad_request", "detail": "scope_id is required"}
-                )
+            scope_id = _bounded_text(
+                body.get("scope_id"), field="scope_id", maximum_chars=MAX_SCOPE_ID_CHARS
+            )
             grant = _authenticate_request_agent(
                 event, permission="execute", scope_id=scope_id
             )
@@ -838,11 +957,9 @@ def _handle_request(event: dict[str, Any], _context: Any) -> dict[str, Any]:
             )
             return _json_response(200, _execute(body, agent_id=grant.agent_id))
         if method == "POST" and path == "/record":
-            scope_id = str(body.get("scope_id", "")).strip()
-            if not scope_id:
-                return _json_response(
-                    400, {"error": "bad_request", "detail": "scope_id is required"}
-                )
+            scope_id = _bounded_text(
+                body.get("scope_id"), field="scope_id", maximum_chars=MAX_SCOPE_ID_CHARS
+            )
             grant = _authenticate_request_agent(
                 event, permission="record", scope_id=scope_id
             )
@@ -857,11 +974,9 @@ def _handle_request(event: dict[str, Any], _context: Any) -> dict[str, Any]:
             )
             return _json_response(201, _record(body, agent_id=grant.agent_id))
         if method == "POST" and path == "/revoke":
-            scope_id = str(body.get("scope_id", "")).strip()
-            if not scope_id:
-                return _json_response(
-                    400, {"error": "bad_request", "detail": "scope_id is required"}
-                )
+            scope_id = _bounded_text(
+                body.get("scope_id"), field="scope_id", maximum_chars=MAX_SCOPE_ID_CHARS
+            )
             grant = _authenticate_revoke_agent(event, scope_id=scope_id)
             if grant is None:
                 return _json_response(403, {"error": "forbidden"})

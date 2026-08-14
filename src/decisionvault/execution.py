@@ -122,7 +122,7 @@ def verify_execution_receipt(
     signing_secret: str,
     expected_scope_id: str,
     expected_agent_id: str,
-    ttl_seconds: int = DEFAULT_RECEIPT_TTL_SECONDS,
+    ttl_seconds: int | None = DEFAULT_RECEIPT_TTL_SECONDS,
     now: datetime | None = None,
 ) -> VerifiedExecutionReceipt:
     if not isinstance(payload, dict):
@@ -158,7 +158,7 @@ def verify_execution_receipt(
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     if issued_at > current + timedelta(seconds=60):
         raise ValueError("execution receipt issued_at is in the future")
-    if current - issued_at > timedelta(seconds=ttl_seconds):
+    if ttl_seconds is not None and current - issued_at > timedelta(seconds=ttl_seconds):
         raise ValueError("execution receipt has expired")
 
     strategy = Strategy(str(payload.get("strategy", "")))

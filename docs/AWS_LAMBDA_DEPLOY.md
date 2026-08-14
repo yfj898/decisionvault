@@ -30,6 +30,10 @@ Hosted Lambda environment variables:
 - `DATABASE_CONNECT_TIMEOUT_SECONDS=5`
 - `DATABASE_STATEMENT_TIMEOUT_MS=8000`
 - `READINESS_CACHE_SECONDS=30`
+- `SECRET_REFRESH_SECONDS=30` — bounded Secrets Manager refresh interval for
+  warm Lambda processes; managed secret values replace stale process values
+- `SECURITY_RECONCILE_SECONDS=30` — interval for reconciling current memory heads
+  against the active authenticated producer set
 - `REVOKE_AGENT_IDS` — comma-separated server-bound agent IDs allowed to invoke
   revocation after normal token/scope capability checks; contains no raw token
 - `EXECUTION_SANDBOX_SCENARIO=stale_payment_token` — non-secret server-owned
@@ -65,6 +69,11 @@ The `/decide` response exposes `memory_influenced`, recalled episode IDs,
 explanation. A conflict abstention is `strategy=null`, `action=ABSTAIN`, and
 `executable=false`.
 
+`GET /health/ready` is fail-closed for the security control plane as well as
+CockroachDB/NVIDIA dependencies. A ready response requires parseable non-empty
+agent grants, a valid execution receipt signing secret, a non-empty demo token,
+and a valid server-owned execution sandbox scenario.
+
 The general `/decide` route always runs with memory governance enabled and
 rejects a caller-supplied `memory_enabled` override. Memory OFF exists only in
 the protected judge demo and offline ablation harnesses.
@@ -81,7 +90,10 @@ replacing newer state or reappearing after a revoke.
 
 `/record` does not accept direct `outcome` / `effectiveness` / `confidence`
 fields. It requires the signed receipt returned by `/execute`; the receipt ID is
-stored under a unique CockroachDB index to make replay idempotent.
+stored under a unique CockroachDB index to make replay idempotent. The 15-minute
+receipt TTL gates **first-time recording**; once a receipt ID has already been
+recorded, a correctly signed replay can return that existing episode after the
+issuance TTL rather than creating a duplicate or failing a delayed retry.
 
 ## Build
 
