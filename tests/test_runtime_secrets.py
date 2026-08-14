@@ -97,3 +97,47 @@ def test_runtime_secret_refresh_replaces_warm_process_credentials(monkeypatch):
     runtime_secrets.hydrate_runtime_secrets()
 
     assert os.environ["DEMO_API_TOKEN"] == "rotated-demo-token"
+
+
+def test_concurrent_secret_refresh_generations_are_serialized(monkeypatch):
+    import sys
+    import threading
+    import time
+
+    state = {"active": 0, "max_active": 0}
+    state_lock = threading.Lock()
+
+    class SlowClient:
+        def get_secret_value(self, *, SecretId):
+            assert SecretId == "arn:test:decisionvault"
+            with state_lock:
+                state["active"] += 1
+                state["max_active"] = max(state["max_active"], state["active"])
+            try:
+                time.sleep(0.01)
+                return {"SecretString": json.dumps(_payload())}
+            finally:
+                with state_lock:
+                    state["active"] -= 1
+
+    class SlowBoto3:
+        def client(self, name):
+            assert name == "secretsmanager"
+            return SlowClient()
+
+    runtime_secrets.load_runtime_secrets.cache_clear()
+    monkeypatch.setenv("DECISIONVAULT_SECRET_ARN", "arn:test:decisionvault")
+    monkeypatch.setitem(sys.modules, "boto3", SlowBoto3())
+    threads = [
+        threading.Thread(
+            target=runtime_secrets.hydrate_runtime_secrets,
+            kwargs={"force": True},
+        )
+        for _ in range(2)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert state["max_active"] == 1

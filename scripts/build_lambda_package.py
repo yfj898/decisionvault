@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+from hashlib import sha256
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -26,7 +28,34 @@ def main() -> int:
             "re-copied after the vendor tree."
         ),
     )
+    parser.add_argument(
+        "--ca-file",
+        type=Path,
+        help=(
+            "Explicit public CockroachDB Cloud CA certificate to package. "
+            "May also be supplied via COCKROACH_CA_FILE. The build fails "
+            "closed when no CA input is provided."
+        ),
+    )
     args = parser.parse_args()
+
+    ca_arg = args.ca_file or (
+        Path(os.environ["COCKROACH_CA_FILE"])
+        if os.getenv("COCKROACH_CA_FILE", "").strip()
+        else None
+    )
+    if ca_arg is None:
+        raise SystemExit(
+            "CockroachDB Cloud CA input is required: pass --ca-file or set COCKROACH_CA_FILE"
+        )
+    cloud_ca = ca_arg.resolve()
+    if not cloud_ca.is_file():
+        raise SystemExit(f"CockroachDB Cloud CA file does not exist: {cloud_ca}")
+    ca_bytes = cloud_ca.read_bytes()
+    if b"-----BEGIN CERTIFICATE-----" not in ca_bytes:
+        raise SystemExit("CockroachDB Cloud CA input is not a PEM certificate")
+    if b"PRIVATE KEY" in ca_bytes:
+        raise SystemExit("refusing to package a CA input containing private-key material")
 
     build_dir = ROOT / ".venv" / "lambda-package"
     if build_dir.exists():
@@ -57,9 +86,7 @@ def main() -> int:
             check=True,
         )
     shutil.copytree(ROOT / "src" / "decisionvault", build_dir / "decisionvault")
-    cloud_ca = ROOT / ".venv" / "cockroach-cloud-root.crt"
-    if cloud_ca.exists():
-        shutil.copy2(cloud_ca, build_dir / "cockroach-cloud-root.crt")
+    shutil.copy2(cloud_ca, build_dir / "cockroach-cloud-root.crt")
     (build_dir / "lambda_function.py").write_text(
         "from decisionvault.aws_lambda import lambda_handler\n",
         encoding="utf-8",
@@ -78,6 +105,7 @@ def main() -> int:
             archive.write(path, relative)
     print(f"lambda_package={args.output}")
     print(f"lambda_package_bytes={args.output.stat().st_size}")
+    print(f"cockroach_ca_sha256={sha256(ca_bytes).hexdigest()}")
     return 0
 
 

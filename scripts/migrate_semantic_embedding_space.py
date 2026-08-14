@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import os
+from typing import Callable
 
 from decisionvault.memory.connection import psycopg_connection_factory
 from decisionvault.memory.embedding import NvidiaSemanticEmbedder
@@ -11,32 +13,23 @@ def _vector_literal(values: list[float]) -> str:
     return "[" + ",".join(f"{float(value):.8f}" for value in values) + "]"
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(
-        description=(
-            "Re-embed current governed heads into the configured semantic "
-            "embedding space without changing outcome/audit content."
-        )
-    )
-    parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--limit", type=int, default=0)
-    args = parser.parse_args()
+@dataclass(frozen=True, slots=True)
+class MigrationResult:
+    target_space: str
+    heads_requiring_migration: int
+    heads_migrated: int
+    concurrent_head_changes_skipped: int
 
-    if not os.getenv("DATABASE_URL"):
-        raise SystemExit("DATABASE_URL is required")
-    api_key = os.getenv("NVIDIA_API_KEY", "").strip()
-    if not api_key:
-        raise SystemExit("NVIDIA_API_KEY is required")
 
-    semantic = NvidiaSemanticEmbedder(
-        api_key=api_key,
-        model_id=os.getenv("NVIDIA_EMBED_MODEL_ID", "nvidia/nv-embedqa-e5-v5"),
-        base_url=os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"),
-        timeout_seconds=float(os.getenv("NVIDIA_TIMEOUT_SECONDS", "20")),
-    )
+def migrate_current_heads(
+    connection_factory: Callable[[], object],
+    semantic: NvidiaSemanticEmbedder,
+    *,
+    dry_run: bool = False,
+    limit: int = 0,
+) -> MigrationResult:
     target_space = semantic.embedding_space
-    factory = psycopg_connection_factory()
-    conn = factory()
+    conn = connection_factory()
     try:
         with conn.cursor() as cur:
             sql = """
@@ -47,9 +40,9 @@ def main() -> int:
                 ORDER BY scope_id, producer_agent_id, strategy
             """
             params: tuple[object, ...]
-            if args.limit > 0:
+            if limit > 0:
                 sql += " LIMIT %s"
-                params = (target_space, args.limit)
+                params = (target_space, limit)
             else:
                 params = (target_space,)
             cur.execute(sql, params)
@@ -57,17 +50,19 @@ def main() -> int:
     finally:
         conn.close()
 
-    print(f"target_embedding_space={target_space}")
-    print(f"heads_requiring_migration={len(rows)}")
-    if args.dry_run or not rows:
-        print("semantic_embedding_space_migration=DRY_RUN" if args.dry_run else "semantic_embedding_space_migration=NOOP")
-        return 0
+    if dry_run or not rows:
+        return MigrationResult(
+            target_space=target_space,
+            heads_requiring_migration=len(rows),
+            heads_migrated=0,
+            concurrent_head_changes_skipped=0,
+        )
 
     migrated = 0
     concurrent_skips = 0
     for scope_id, producer_agent_id, strategy, episode_id, situation, old_space in rows:
         vector = _vector_literal(semantic.embed_passage(str(situation)))
-        conn = factory()
+        conn = connection_factory()
         try:
             with conn.cursor() as cur:
                 cur.execute(
@@ -113,8 +108,54 @@ def main() -> int:
         finally:
             conn.close()
 
-    print(f"heads_migrated={migrated}")
-    print(f"concurrent_head_changes_skipped={concurrent_skips}")
+    return MigrationResult(
+        target_space=target_space,
+        heads_requiring_migration=len(rows),
+        heads_migrated=migrated,
+        concurrent_head_changes_skipped=concurrent_skips,
+    )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Re-embed current governed heads into the configured semantic "
+            "embedding space without changing outcome/audit content."
+        )
+    )
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--limit", type=int, default=0)
+    args = parser.parse_args()
+
+    if not os.getenv("DATABASE_URL"):
+        raise SystemExit("DATABASE_URL is required")
+    api_key = os.getenv("NVIDIA_API_KEY", "").strip()
+    if not api_key:
+        raise SystemExit("NVIDIA_API_KEY is required")
+
+    semantic = NvidiaSemanticEmbedder(
+        api_key=api_key,
+        revision=os.getenv("NVIDIA_EMBED_REVISION", "").strip(),
+        model_id=os.getenv("NVIDIA_EMBED_MODEL_ID", "nvidia/nv-embedqa-e5-v5"),
+        base_url=os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"),
+        timeout_seconds=float(os.getenv("NVIDIA_TIMEOUT_SECONDS", "20")),
+    )
+    factory = psycopg_connection_factory()
+    result = migrate_current_heads(
+        factory,
+        semantic,
+        dry_run=args.dry_run,
+        limit=args.limit,
+    )
+
+    print(f"target_embedding_space={result.target_space}")
+    print(f"heads_requiring_migration={result.heads_requiring_migration}")
+    if args.dry_run or result.heads_requiring_migration == 0:
+        print("semantic_embedding_space_migration=DRY_RUN" if args.dry_run else "semantic_embedding_space_migration=NOOP")
+        return 0
+
+    print(f"heads_migrated={result.heads_migrated}")
+    print(f"concurrent_head_changes_skipped={result.concurrent_head_changes_skipped}")
     print("semantic_embedding_space_migration=PASS")
     return 0
 

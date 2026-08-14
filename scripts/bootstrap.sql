@@ -12,11 +12,12 @@ CREATE TABLE IF NOT EXISTS decision_episodes (
     embedding VECTOR(64) NOT NULL,
     semantic_embedding VECTOR(1024),
     semantic_embedding_space STRING,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    observed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS decision_episodes_scope_created_idx
-ON decision_episodes (scope_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS decision_episodes_scope_observed_idx
+ON decision_episodes (scope_id, observed_at DESC);
 
 CREATE UNIQUE INDEX IF NOT EXISTS decision_episodes_execution_receipt_uidx
 ON decision_episodes (execution_receipt_id)
@@ -40,7 +41,8 @@ CREATE TABLE IF NOT EXISTS decision_memory_heads (
     supersedes_episode_id UUID,
     semantic_embedding VECTOR(1024) NOT NULL,
     semantic_embedding_space STRING NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    observed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (scope_id, producer_agent_id, strategy)
 );
 

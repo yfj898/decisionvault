@@ -14,7 +14,8 @@ receipt signing key directly in Lambda environment configuration.
 
 The hosted function now keeps those values in one AWS Secrets Manager secret.
 The Lambda environment contains only the secret ARN and non-sensitive runtime
-knobs such as model IDs, base URL, and timeout.
+settings such as model IDs, explicit embedding revision, the fixed NVIDIA origin
+assertion, and timeout.
 
 Managed secret keys:
 
@@ -32,6 +33,7 @@ Lambda environment after migration:
 DECISIONVAULT_SECRET_ARN
 NVIDIA_BASE_URL
 NVIDIA_EMBED_MODEL_ID
+NVIDIA_EMBED_REVISION
 NVIDIA_MODEL_ID
 NVIDIA_TIMEOUT_SECONDS
 ```
@@ -78,7 +80,9 @@ cleanup_rows=(0, 0)
 
 Managed values are now refreshed in warm Lambda processes on a bounded TTL
 (`SECRET_REFRESH_SECONDS`, default 30 seconds) and replace the stale managed
-process value rather than using `setdefault`. Agent grant reconciliation runs on
+process value rather than using `setdefault`. Refresh/cache hydration is guarded
+by one warm-process lock so concurrent refresh attempts cannot interleave two
+secret generations. Agent grant reconciliation runs on
 a similar bounded interval before authenticated POST handling: current heads
 owned by producers absent from the active grant set are removed and a revocation
 audit event is appended. This bounds credential-revocation latency in warm

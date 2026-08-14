@@ -58,6 +58,7 @@ def main() -> int:
     connection_factory = psycopg_connection_factory()
     semantic = NvidiaSemanticEmbedder(
         api_key=api_key,
+        revision=os.getenv("NVIDIA_EMBED_REVISION", "").strip(),
         model_id=os.getenv("NVIDIA_EMBED_MODEL_ID", "nvidia/nv-embedqa-e5-v5"),
         base_url=os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"),
         timeout_seconds=float(os.getenv("NVIDIA_TIMEOUT_SECONDS", "20")),
@@ -173,6 +174,7 @@ def main() -> int:
         payload = {
             "benchmark": "decisionvault-production-semantic-conformance",
             "embedding_model": semantic.model_id,
+            "embedding_revision": semantic.revision,
             "embedding_space": semantic.embedding_space,
             "embedding_dimensions": semantic.expected_dimensions,
             "storage": "decision_memory_heads.semantic_embedding VECTOR(1024)",

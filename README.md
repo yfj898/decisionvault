@@ -456,13 +456,18 @@ repository. See `docs/evidence/PHASE4_MANAGED_MCP.md`.
 - [x] Real external model invocation evidence (NVIDIA; Bedrock optional)
 - [x] Real NVIDIA semantic embedding path (`passage` / `query`)
 - [x] Native `VECTOR(1024)` production semantic DVI; no hosted 1024→64 projection
+- [x] Explicit embedding generation/revision contract; cross-revision recall is fail-closed
+- [x] Fixed NVIDIA credential-bearing provider origin with redirect rejection
 - [x] Cross-agent outcome-memory provenance and scope isolation
 - [x] Per-agent token → identity / scope / permission binding for `/execute`, `/record`, `/decide`, and `/revoke`
 - [x] Server-signed `/execute` receipts required by the general `/record` API
+- [x] Signed decision snapshot binding across `/decide` → `/execute`; stale snapshots fail HTTP 409
+- [x] Decider/executor role separation preserved; receipts audit both decision and execution identities
 - [x] Unique execution receipt idempotency boundary
 - [x] Typed/race-safe same-producer supersession boundary
 - [x] Conflict-aware multi-agent memory governance
 - [x] Staleness / supersession / candidate-crowding controls
+- [x] Explicit `observed_at` event time and `recorded_at` ingestion/audit time
 - [x] Server-side producer trust weighting with conflict visibility
 - [x] AWS Lambda hosted demo
 - [x] Responsive public judge UI
@@ -492,12 +497,31 @@ than directly in Lambda environment variables. The Lambda execution role can
 read only the single DecisionVault runtime secret; the function environment
 contains the secret ARN plus non-sensitive model/runtime settings.
 
+`NVIDIA_BASE_URL` is not an arbitrary egress knob: DecisionVault accepts only
+the canonical `https://integrate.api.nvidia.com/v1` value, constructs only the
+known chat/embedding endpoints, and rejects redirects for bearer-authenticated
+requests. `NVIDIA_EMBED_REVISION` is an operator-owned generation contract; it
+is part of `semantic_embedding_space`, so the same model ID cannot silently mix
+vectors from two provider generations. Readiness fails closed if the revision is
+missing, the provider origin is invalid, or current governed heads are in a
+different embedding space.
+
+Managed secret refresh is serialized per warm process so one refresh generation
+cannot interleave environment hydration with another. Decision episodes retain
+both `observed_at` (event ordering) and `recorded_at` (system ingestion/audit
+time); only `observed_at` may advance a producer/strategy current head.
+
 CockroachDB connections use bounded connect/statement timeouts, and the memory
 store retries a complete transaction on CockroachDB SQLSTATE `40001` without
 repeating the external embedding call. `/health/live` exposes dependency-free
 liveness; `/health/ready` actively probes Secrets Manager, CockroachDB, and the
 production E5-v5 embedding endpoint and caches the result for 30 seconds per warm
 Lambda process.
+
+Within the hosted 30-second Lambda deadline, semantic provider calls are clamped
+to at most 12 seconds and the explanation-only advisor to at most 5 seconds.
+This leaves deterministic DB/serialization margin and keeps a slow advisor from
+turning its intended graceful degradation into a platform-level timeout.
 
 Each hosted request also emits a low-cardinality CloudWatch EMF event under the
 `DecisionVault` namespace. Request/error counts, latency, memory influence,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hmac
 import json
 import os
 import time
@@ -16,8 +17,12 @@ from decisionvault.agent.memory_governance import (
 from decisionvault.agent.policy import OutcomeAwarePolicy
 from decisionvault.domain import Decision, DecisionAction, Outcome, Strategy
 from decisionvault.execution import (
+    DecisionSnapshotStale,
     configured_sandbox_scenario,
+    decision_state_digest,
+    issue_decision_snapshot,
     issue_sandbox_receipt,
+    verify_decision_snapshot,
     verify_execution_receipt,
 )
 from decisionvault.memory.cockroach import (
@@ -33,6 +38,7 @@ from decisionvault.memory.embedding import (
 )
 from decisionvault.observability import emit_request_metric
 from decisionvault.providers.nvidia import NvidiaDecisionAdvisor
+from decisionvault.providers.http_security import validate_nvidia_base_url
 from decisionvault.rate_limit import CockroachRateLimiter
 from decisionvault.runtime_secrets import hydrate_runtime_secrets
 from decisionvault.ui import INDEX_HTML
@@ -82,6 +88,39 @@ class RateLimitExceeded(Exception):
 
 class ExecutionPolicyConflict(Exception):
     """Execution is blocked because the current deterministic decision disagrees."""
+
+
+def _embedding_revision() -> str:
+    revision = os.getenv("NVIDIA_EMBED_REVISION", "").strip()
+    if not revision:
+        raise RuntimeError("NVIDIA_EMBED_REVISION is required for semantic memory")
+    return revision
+
+
+def _bounded_provider_timeout(*, maximum_seconds: float) -> float:
+    configured = float(os.getenv("NVIDIA_TIMEOUT_SECONDS", "20"))
+    if configured <= 0:
+        raise RuntimeError("NVIDIA_TIMEOUT_SECONDS must be positive")
+    return min(maximum_seconds, configured)
+
+
+def _semantic_runtime_timeout() -> float:
+    # Preserve room inside the 30s Lambda deadline for the bounded CockroachDB
+    # statement timeout and response/serialization overhead.
+    return _bounded_provider_timeout(maximum_seconds=12.0)
+
+
+def _advisor_runtime_timeout() -> float:
+    # The advisor is non-authoritative and runs after the deterministic
+    # decision. Keep its deadline short enough for graceful fallback to return.
+    return _bounded_provider_timeout(maximum_seconds=5.0)
+
+
+def _current_semantic_embedding_space() -> str:
+    return semantic_embedding_space(
+        os.getenv("NVIDIA_EMBED_MODEL_ID", "nvidia/nv-embedqa-e5-v5"),
+        revision=_embedding_revision(),
+    )
 
 
 def _json_response(
@@ -277,13 +316,14 @@ def _build_memory_store() -> CockroachVectorMemoryStore:
     if nvidia_key:
         semantic = NvidiaSemanticEmbedder(
             api_key=nvidia_key,
+            revision=_embedding_revision(),
             model_id=os.getenv(
                 "NVIDIA_EMBED_MODEL_ID", "nvidia/nv-embedqa-e5-v5"
             ),
             base_url=os.getenv(
                 "NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"
             ),
-            timeout_seconds=float(os.getenv("NVIDIA_TIMEOUT_SECONDS", "20")),
+            timeout_seconds=_semantic_runtime_timeout(),
         )
         store = CockroachVectorMemoryStore(
             connection_factory=psycopg_connection_factory(),
@@ -317,7 +357,7 @@ def _build_agent(
             base_url=os.getenv(
                 "NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"
             ),
-            timeout_seconds=float(os.getenv("NVIDIA_TIMEOUT_SECONDS", "20")),
+            timeout_seconds=_advisor_runtime_timeout(),
         )
     return DecisionAgent(
         memory=store,
@@ -352,9 +392,20 @@ def _delete_scope(scope_id: str) -> None:
 
 def _health() -> dict[str, Any]:
     managed_secret = bool(os.getenv("DECISIONVAULT_SECRET_ARN", "").strip())
-    configured_embedding_space = semantic_embedding_space(
-        os.getenv("NVIDIA_EMBED_MODEL_ID", "nvidia/nv-embedqa-e5-v5")
+    embedding_revision = os.getenv("NVIDIA_EMBED_REVISION", "").strip()
+    configured_embedding_space = (
+        semantic_embedding_space(
+            os.getenv("NVIDIA_EMBED_MODEL_ID", "nvidia/nv-embedqa-e5-v5"),
+            revision=embedding_revision,
+        )
+        if embedding_revision
+        else None
     )
+    try:
+        validate_nvidia_base_url(os.getenv("NVIDIA_BASE_URL"))
+        nvidia_provider_origin_valid = True
+    except ValueError:
+        nvidia_provider_origin_valid = False
     return {
         "service": "decisionvault",
         "status": "ok",
@@ -364,7 +415,9 @@ def _health() -> dict[str, Any]:
         or bool(os.getenv("NVIDIA_API_KEY")),
         "semantic_embedding_configured": managed_secret
         or bool(os.getenv("NVIDIA_API_KEY")),
+        "semantic_embedding_revision_configured": bool(embedding_revision),
         "semantic_embedding_space": configured_embedding_space,
+        "nvidia_provider_origin_valid": nvidia_provider_origin_valid,
         "execution_receipt_signing_configured": managed_secret
         or bool(os.getenv("EXECUTION_RECEIPT_SECRET", "").strip()),
         "runtime_secret_source": (
@@ -384,6 +437,9 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
     secret_ok = False
     database_ok = False
     semantic_embedding_ok = False
+    semantic_embedding_revision_ok = False
+    nvidia_provider_origin_ok = False
+    semantic_head_space_ok = False
     governance_schema_ok = False
     agent_auth_ok = False
     receipt_signing_ok = False
@@ -432,12 +488,27 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
                     cur.execute("SELECT 1")
                     database_ok = cur.fetchone()[0] == 1
                     cur.execute(
-                        "SELECT semantic_embedding_space "
+                        "SELECT semantic_embedding_space, observed_at, recorded_at "
                         "FROM decision_memory_heads LIMIT 0"
+                    )
+                    cur.execute(
+                        "SELECT observed_at, recorded_at "
+                        "FROM decision_episodes LIMIT 0"
                     )
                     cur.execute(
                         "SELECT revocation_id FROM decision_memory_revocations LIMIT 0"
                     )
+                    configured_embedding_space = _current_semantic_embedding_space()
+                    cur.execute(
+                        "SELECT count(*) FROM decision_memory_heads "
+                        "WHERE semantic_embedding_space IS DISTINCT FROM %s",
+                        (configured_embedding_space,),
+                    )
+                    semantic_head_space_ok = int(cur.fetchone()[0]) == 0
+                    if not semantic_head_space_ok:
+                        raise RuntimeError(
+                            "current semantic heads require embedding-space migration"
+                        )
                     governance_schema_ok = True
             finally:
                 conn.close()
@@ -445,8 +516,21 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
             errors.append(f"database:{type(exc).__name__}")
 
         try:
+            _embedding_revision()
+            semantic_embedding_revision_ok = True
+        except Exception as exc:
+            errors.append(f"semantic_embedding_revision:{type(exc).__name__}")
+
+        try:
+            validate_nvidia_base_url(os.getenv("NVIDIA_BASE_URL"))
+            nvidia_provider_origin_ok = True
+        except Exception as exc:
+            errors.append(f"nvidia_provider_origin:{type(exc).__name__}")
+
+        try:
             semantic = NvidiaSemanticEmbedder(
                 api_key=os.getenv("NVIDIA_API_KEY", "").strip(),
+                revision=_embedding_revision(),
                 model_id=os.getenv(
                     "NVIDIA_EMBED_MODEL_ID", "nvidia/nv-embedqa-e5-v5"
                 ),
@@ -470,6 +554,9 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
             database_ok,
             governance_schema_ok,
             semantic_embedding_ok,
+            semantic_embedding_revision_ok,
+            semantic_head_space_ok,
+            nvidia_provider_origin_ok,
             agent_auth_ok,
             receipt_signing_ok,
             demo_auth_ok,
@@ -485,7 +572,10 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
             "database": database_ok,
             "memory_governance_schema": governance_schema_ok,
             "semantic_embedding": semantic_embedding_ok,
+            "semantic_embedding_revision": semantic_embedding_revision_ok,
             "semantic_embedding_space": configured_embedding_space,
+            "semantic_head_space_current": semantic_head_space_ok,
+            "nvidia_provider_origin": nvidia_provider_origin_ok,
             "agent_auth": agent_auth_ok,
             "execution_receipt_signing": receipt_signing_ok,
             "demo_auth": demo_auth_ok,
@@ -525,7 +615,23 @@ def _decide(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
         scope_id=scope_id,
         situation=situation,
     )
-    return _decision_payload(decision)
+    payload = _decision_payload(decision)
+    if decision.executable and decision.strategy is not None:
+        digest = decision_state_digest(
+            decision,
+            semantic_embedding_space=_current_semantic_embedding_space(),
+        )
+        payload["decision_snapshot"] = issue_decision_snapshot(
+            scope_id=scope_id,
+            agent_id=agent_id,
+            situation=situation,
+            strategy=decision.strategy,
+            decision_digest=digest,
+            signing_secret=_execution_secret(),
+        )
+    else:
+        payload["decision_snapshot"] = None
+    return payload
 
 
 def _execute(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
@@ -543,6 +649,13 @@ def _execute(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
         os.getenv("EXECUTION_SANDBOX_SCENARIO", "stale_payment_token")
     )
     strategy = Strategy(str(body.get("strategy", "")))
+    snapshot = verify_decision_snapshot(
+        body.get("decision_snapshot"),
+        signing_secret=_execution_secret(),
+        expected_scope_id=scope_id,
+        expected_situation=situation,
+        expected_strategy=strategy,
+    )
     policy_agent = _build_agent(
         memory_enabled=True,
         agent_id=agent_id,
@@ -558,6 +671,14 @@ def _execute(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
         raise ExecutionPolicyConflict(
             "requested strategy does not match the current deterministic decision"
         )
+    current_digest = decision_state_digest(
+        current_decision,
+        semantic_embedding_space=_current_semantic_embedding_space(),
+    )
+    if not hmac.compare_digest(snapshot.decision_digest, current_digest):
+        raise DecisionSnapshotStale(
+            "decision snapshot is stale relative to current policy/memory state"
+        )
     receipt = issue_sandbox_receipt(
         scope_id=scope_id,
         agent_id=agent_id,
@@ -565,6 +686,10 @@ def _execute(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
         strategy=strategy,
         scenario=scenario,
         signing_secret=_execution_secret(),
+        decision_snapshot_id=snapshot.snapshot_id,
+        decision_digest=snapshot.decision_digest,
+        decision_revision=snapshot.decision_revision,
+        decision_agent_id=snapshot.agent_id,
     )
     return {
         "execution_receipt": receipt,
@@ -580,7 +705,7 @@ def _episode_by_receipt(receipt_id: str) -> dict[str, Any] | None:
             cur.execute(
                 """
                 SELECT episode_id::STRING, strategy, outcome, effectiveness,
-                       evidence->>'producer_agent_id'
+                       evidence->>'producer_agent_id', observed_at, recorded_at
                 FROM decision_episodes
                 WHERE execution_receipt_id = %s
                 LIMIT 1
@@ -598,6 +723,8 @@ def _episode_by_receipt(receipt_id: str) -> dict[str, Any] | None:
         "outcome": row[2],
         "effectiveness": float(row[3]),
         "producer_agent_id": row[4],
+        "observed_at": row[5].isoformat(),
+        "recorded_at": row[6].isoformat(),
         "execution_receipt_id": receipt_id,
         "idempotent_replay": True,
     }
@@ -811,6 +938,14 @@ def _record(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
         "execution_verified": "true",
         "execution_outcome_source": "decisionvault-payment-recovery-sandbox",
     }
+    if receipt.decision_snapshot_id:
+        evidence["decision_snapshot_id"] = receipt.decision_snapshot_id
+    if receipt.decision_digest:
+        evidence["decision_digest"] = receipt.decision_digest
+    if receipt.decision_revision:
+        evidence["decision_revision"] = receipt.decision_revision
+    if receipt.decision_agent_id:
+        evidence["decision_agent_id"] = receipt.decision_agent_id
     supersedes_episode_id = str(body.get("supersedes_episode_id", "")).strip()
     if supersedes_episode_id:
         evidence["supersedes_episode_id"] = _validate_supersession(
@@ -850,6 +985,8 @@ def _record(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
         "outcome": episode.outcome.value,
         "effectiveness": episode.effectiveness,
         "producer_agent_id": episode.evidence.get("producer_agent_id"),
+        "observed_at": episode.observed_at.isoformat(),
+        "recorded_at": episode.recorded_at.isoformat(),
         "execution_receipt_id": receipt.receipt_id,
         "idempotent_replay": False,
     }
@@ -1021,6 +1158,7 @@ def _handle_request(event: dict[str, Any], _context: Any) -> dict[str, Any]:
         SupersessionWriteConflict,
         MemoryRevocationConflict,
         ExecutionPolicyConflict,
+        DecisionSnapshotStale,
     ) as exc:
         return _json_response(409, {"error": "conflict", "detail": str(exc)})
     except (ValueError, TypeError, json.JSONDecodeError) as exc:

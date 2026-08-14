@@ -66,16 +66,21 @@ def test_connection_factory_applies_connection_and_statement_timeouts(monkeypatc
 
 
 class ReadyCursor:
+    def __init__(self):
+        self.last_sql = ""
+
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc, tb):
         return False
 
-    def execute(self, _sql):
-        pass
+    def execute(self, sql, _params=None):
+        self.last_sql = sql
 
     def fetchone(self):
+        if "WHERE semantic_embedding_space IS DISTINCT FROM" in self.last_sql:
+            return (0,)
         return (1,)
 
 
@@ -88,8 +93,11 @@ class ReadyConnection:
 
 
 class ReadyEmbedder:
-    def __init__(self, **_kwargs):
-        pass
+    def __init__(self, **kwargs):
+        self.embedding_space = (
+            "nvidia/nv-embedqa-e5-v5|revision="
+            f"{kwargs['revision']}|dim=1024|contract=query-passage-v1"
+        )
 
     def embed_query(self, _text):
         return [0.0] * 1024
@@ -120,6 +128,8 @@ def _configure_ready_security(monkeypatch):
     monkeypatch.setenv("EXECUTION_RECEIPT_SECRET", "receipt-secret-value")
     monkeypatch.setenv("DEMO_API_TOKEN", "demo-token")
     monkeypatch.setenv("EXECUTION_SANDBOX_SCENARIO", "stale_payment_token")
+    monkeypatch.setenv("NVIDIA_EMBED_REVISION", "test-revision-v1")
+    monkeypatch.setenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
 
 
 def test_readiness_checks_secret_database_and_embedding(monkeypatch):
@@ -140,6 +150,9 @@ def test_readiness_checks_secret_database_and_embedding(monkeypatch):
     assert payload["status"] == "ready"
     assert payload["database"] is True
     assert payload["semantic_embedding"] is True
+    assert payload["semantic_embedding_revision"] is True
+    assert payload["semantic_head_space_current"] is True
+    assert payload["nvidia_provider_origin"] is True
     assert payload["advisor_required_for_readiness"] is False
 
 
@@ -178,6 +191,7 @@ def test_readiness_fails_closed_on_security_control_misconfiguration(monkeypatch
     monkeypatch.setenv("AGENT_AUTH_JSON", "not-json")
     monkeypatch.setenv("EXECUTION_RECEIPT_SECRET", "short")
     monkeypatch.setenv("DEMO_API_TOKEN", "")
+    monkeypatch.setenv("NVIDIA_EMBED_REVISION", "test-revision-v1")
 
     status, payload = aws_lambda._readiness()
 
@@ -185,6 +199,25 @@ def test_readiness_fails_closed_on_security_control_misconfiguration(monkeypatch
     assert payload["agent_auth"] is False
     assert payload["execution_receipt_signing"] is False
     assert payload["demo_auth"] is False
+
+
+def test_readiness_fails_closed_on_nvidia_origin_override(monkeypatch):
+    aws_lambda._READINESS_CACHE = None
+    _configure_ready_security(monkeypatch)
+    monkeypatch.setenv("NVIDIA_BASE_URL", "https://attacker.example/v1")
+    monkeypatch.setenv("NVIDIA_API_KEY", "test")
+    monkeypatch.setattr(aws_lambda, "hydrate_runtime_secrets", lambda: None)
+    monkeypatch.setattr(
+        aws_lambda,
+        "psycopg_connection_factory",
+        lambda: (lambda: ReadyConnection()),
+    )
+    monkeypatch.setattr(aws_lambda, "NvidiaSemanticEmbedder", ReadyEmbedder)
+
+    status, payload = aws_lambda._readiness()
+
+    assert status == 503
+    assert payload["nvidia_provider_origin"] is False
 
 
 def test_readiness_cache_avoids_repeated_external_probe(monkeypatch):

@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS decision_memory_heads (
     evidence JSONB NOT NULL DEFAULT '{}'::JSONB,
     semantic_embedding VECTOR(1024) NOT NULL,
     semantic_embedding_space STRING NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    observed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (scope_id, producer_agent_id, strategy)
 );
 

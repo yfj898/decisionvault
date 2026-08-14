@@ -42,7 +42,8 @@ def _episode(
         effectiveness=effectiveness,
         confidence=1.0,
         evidence={"producer_agent_id": producer, **(extra or {})},
-        created_at=datetime.now(timezone.utc) - timedelta(days=age_days),
+        observed_at=datetime.now(timezone.utc) - timedelta(days=age_days),
+        recorded_at=datetime.now(timezone.utc),
     )
 
 
@@ -74,6 +75,7 @@ def _build_store(connection_factory, *, semantic: bool):
         raise SystemExit("NVIDIA_API_KEY is required for --semantic")
     embedder = NvidiaSemanticEmbedder(
         api_key=key,
+        revision=os.getenv("NVIDIA_EMBED_REVISION", "").strip(),
         base_url=os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"),
         model_id=os.getenv("NVIDIA_EMBED_MODEL_ID", "nvidia/nv-embedqa-e5-v5"),
     )

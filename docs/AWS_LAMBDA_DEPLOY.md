@@ -25,8 +25,14 @@ Hosted Lambda environment variables:
   containing the sensitive runtime values
 - `NVIDIA_MODEL_ID=meta/llama-3.1-8b-instruct`
 - `NVIDIA_EMBED_MODEL_ID=nvidia/nv-embedqa-e5-v5`
-- `NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1`
-- `NVIDIA_TIMEOUT_SECONDS`
+- `NVIDIA_EMBED_REVISION=decisionvault-prod-r1` — explicit operator-controlled
+  embedding generation; bump before re-embedding when provider weights change
+- `NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1` — fixed compatibility
+  assertion, not a caller/deployer-selectable credential destination
+- `NVIDIA_TIMEOUT_SECONDS` — operator ceiling; Lambda clamps semantic embedding
+  calls to at most 12s and the non-authoritative advisor to at most 5s so the
+  30s platform timeout still has room for bounded CockroachDB work and response
+  handling
 - `DATABASE_CONNECT_TIMEOUT_SECONDS=5`
 - `DATABASE_STATEMENT_TIMEOUT_MS=8000`
 - `READINESS_CACHE_SECONDS=30`
@@ -55,8 +61,9 @@ Secrets Manager at runtime.
 - `GET /health/ready` — active Secrets Manager + CockroachDB governance-v2
   schema + E5-v5 readiness
 - `POST /execute` — agent-token authenticated sandbox execution; returns a signed
-  receipt only if the current deterministic policy is executable and commits the
-  requested strategy; caller-supplied `scenario` is rejected
+  receipt only if the caller supplies the signed `/decide` decision snapshot and
+  the current deterministic policy/memory digest still matches it; stale
+  snapshots return HTTP 409 and no receipt; caller-supplied `scenario` is rejected
 - `POST /record` — agent-token authenticated outcome recording
 - `POST /decide` — agent-token authenticated scoped recall/decision
 - `POST /revoke` — producer-bound current-head revocation with append-only audit
@@ -66,8 +73,13 @@ Secrets Manager at runtime.
 
 The `/decide` response exposes `memory_influenced`, recalled episode IDs,
 `strategy`, `action`, `executable`, and (when available) the bounded model
-explanation. A conflict abstention is `strategy=null`, `action=ABSTAIN`, and
-`executable=false`.
+explanation. Executable decisions also carry a server-signed decision snapshot
+binding the authorized decider identity, scope, situation, strategy,
+deterministic policy/memory digest, embedding space, and decision-contract
+revision. A separately authorized executor may consume that snapshot within the
+same scope; the execution receipt records both `decision_agent_id` and the actual
+executor `agent_id`. A conflict abstention is `strategy=null`, `action=ABSTAIN`,
+and `executable=false`.
 
 `GET /health/ready` is fail-closed for the security control plane as well as
 CockroachDB/NVIDIA dependencies. A ready response requires parseable non-empty
@@ -83,10 +95,12 @@ The caller does not supply `agent_id` to `/execute`, `/record`, `/decide`, or
 token's namespace boundary or permission are rejected. Revocation additionally
 requires that server-bound identity in `REVOKE_AGENT_IDS`.
 
-Verified receipt `issued_at` is persisted as the observation/event time. Current
-heads advance monotonically by that event time, using immutable producer/strategy
-history as a high-watermark, so delayed older receipts remain auditable without
-replacing newer state or reappearing after a revoke.
+Verified receipt `issued_at` is persisted as `observed_at`, the observation/event
+time. `recorded_at` separately records when DecisionVault accepted the immutable
+episode. Current heads advance monotonically only by `observed_at`, using
+immutable producer/strategy history as a high-watermark, so delayed older
+receipts remain auditable without replacing newer state or reappearing after a
+revoke.
 
 `/record` does not accept direct `outcome` / `effectiveness` / `confidence`
 fields. It requires the signed receipt returned by `/execute`; the receipt ID is
@@ -98,11 +112,14 @@ issuance TTL rather than creating a duplicate or failing a delayed retry.
 ## Build
 
 ```bash
-python scripts/build_lambda_package.py
+python scripts/build_lambda_package.py \
+  --ca-file /path/to/public/cockroach-cloud-root.crt
 ```
 
-This writes `dist/decisionvault-lambda.zip`. The `dist/` directory is ignored by
-Git.
+This writes `dist/decisionvault-lambda.zip`. Lambda dependencies are exactly
+pinned. The public CockroachDB CA is an explicit build input; a missing/non-PEM
+CA or any CA input containing private-key material fails the build before a ZIP
+is produced. The `dist/` directory is ignored by Git.
 
 ## Competition proof
 

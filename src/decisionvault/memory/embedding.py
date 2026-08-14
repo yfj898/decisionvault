@@ -5,7 +5,14 @@ from math import sqrt
 import re
 from dataclasses import dataclass
 import json
-from urllib.request import Request, urlopen
+from urllib.request import Request
+
+from decisionvault.providers.http_security import (
+    NVIDIA_API_BASE_URL,
+    nvidia_endpoint,
+    open_nvidia_request,
+    validate_nvidia_base_url,
+)
 
 
 DEFAULT_EMBEDDING_DIMENSIONS = 64
@@ -16,6 +23,7 @@ SEMANTIC_EMBEDDING_CONTRACT_VERSION = "query-passage-v1"
 def semantic_embedding_space(
     model_id: str,
     *,
+    revision: str,
     dimensions: int = NVIDIA_EMBEDDING_DIMENSIONS,
     contract_version: str = SEMANTIC_EMBEDDING_CONTRACT_VERSION,
 ) -> str:
@@ -27,7 +35,13 @@ def semantic_embedding_space(
     normalized_contract = contract_version.strip()
     if not normalized_contract:
         raise ValueError("semantic embedding contract version is required")
-    return f"{normalized_model}|dim={dimensions}|contract={normalized_contract}"
+    normalized_revision = revision.strip()
+    if not normalized_revision:
+        raise ValueError("semantic embedding revision is required")
+    return (
+        f"{normalized_model}|revision={normalized_revision}|dim={dimensions}"
+        f"|contract={normalized_contract}"
+    )
 
 
 def deterministic_text_embedding(
@@ -88,15 +102,22 @@ def project_dense_embedding(
 @dataclass(slots=True)
 class NvidiaSemanticEmbedder:
     api_key: str
-    base_url: str = "https://integrate.api.nvidia.com/v1"
+    revision: str
+    base_url: str = NVIDIA_API_BASE_URL
     model_id: str = "nvidia/nv-embedqa-e5-v5"
     timeout_seconds: float = 20.0
     expected_dimensions: int = NVIDIA_EMBEDDING_DIMENSIONS
+
+    def __post_init__(self) -> None:
+        self.base_url = validate_nvidia_base_url(self.base_url)
+        if not self.revision.strip():
+            raise ValueError("semantic embedding revision is required")
 
     @property
     def embedding_space(self) -> str:
         return semantic_embedding_space(
             self.model_id,
+            revision=self.revision,
             dimensions=self.expected_dimensions,
         )
 
@@ -110,7 +131,7 @@ class NvidiaSemanticEmbedder:
             }
         ).encode("utf-8")
         request = Request(
-            f"{self.base_url.rstrip('/')}/embeddings",
+            nvidia_endpoint(self.base_url, "embeddings"),
             data=body,
             headers={
                 "Authorization": f"Bearer {self.api_key}",
@@ -119,7 +140,9 @@ class NvidiaSemanticEmbedder:
             },
             method="POST",
         )
-        with urlopen(request, timeout=self.timeout_seconds) as response:
+        with open_nvidia_request(
+            request, timeout_seconds=self.timeout_seconds
+        ) as response:
             payload = json.loads(response.read())
         dense = [float(value) for value in payload["data"][0]["embedding"]]
         if len(dense) != self.expected_dimensions:

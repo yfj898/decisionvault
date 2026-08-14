@@ -87,7 +87,8 @@ def test_governance_conflict_is_not_hidden_beyond_legacy_32_candidates():
             effectiveness=0.1,
             confidence=1.0,
             evidence={"producer_agent_id": "failure-observer"},
-            created_at=base,
+            observed_at=base,
+            recorded_at=base,
         )
     )
     for index in range(31):
@@ -101,7 +102,8 @@ def test_governance_conflict_is_not_hidden_beyond_legacy_32_candidates():
                 effectiveness=0.5,
                 confidence=1.0,
                 evidence={"producer_agent_id": f"neutral-{index}"},
-                created_at=base + timedelta(seconds=index + 1),
+                observed_at=base + timedelta(seconds=index + 1),
+                recorded_at=base + timedelta(seconds=index + 1),
             )
         )
     store.save(
@@ -114,7 +116,8 @@ def test_governance_conflict_is_not_hidden_beyond_legacy_32_candidates():
             effectiveness=0.9,
             confidence=1.0,
             evidence={"producer_agent_id": "success-observer"},
-            created_at=base + timedelta(seconds=40),
+            observed_at=base + timedelta(seconds=40),
+            recorded_at=base + timedelta(seconds=40),
         )
     )
 

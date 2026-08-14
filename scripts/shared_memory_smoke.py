@@ -133,6 +133,7 @@ def main() -> int:
             raise SystemExit("NVIDIA_API_KEY is required for --semantic")
         semantic = NvidiaSemanticEmbedder(
             api_key=api_key,
+            revision=os.getenv("NVIDIA_EMBED_REVISION", "").strip(),
             base_url=os.getenv(
                 "NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"
             ),

@@ -505,5 +505,6 @@ def seed_episode(
         effectiveness=seed.effectiveness,
         confidence=seed.confidence,
         evidence=evidence,
-        created_at=now - timedelta(days=seed.age_days),
+        observed_at=now - timedelta(days=seed.age_days),
+        recorded_at=now,
     )

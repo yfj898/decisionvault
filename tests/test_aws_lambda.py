@@ -3,14 +3,24 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import json
 
+import pytest
+
 import decisionvault.aws_lambda as aws_lambda
 from decisionvault.agent.auth import token_digest
 from decisionvault.domain import Decision, DecisionAction, Strategy
-from decisionvault.execution import issue_sandbox_receipt
+from decisionvault.execution import (
+    decision_state_digest,
+    issue_decision_snapshot,
+    issue_sandbox_receipt,
+)
 from decisionvault.memory.cockroach import SupersessionWriteConflict
 
 
 def _configure_agent(monkeypatch, *, token="agent-token", permission="decide"):
+    monkeypatch.setenv("NVIDIA_EMBED_REVISION", "test-revision-v1")
+    monkeypatch.setenv(
+        "EXECUTION_RECEIPT_SECRET", "test-execution-receipt-secret-123"
+    )
     monkeypatch.setenv(
         "AGENT_AUTH_JSON",
         json.dumps(
@@ -29,6 +39,7 @@ def _configure_agent(monkeypatch, *, token="agent-token", permission="decide"):
 
 
 def _configure_executor(monkeypatch, *, token="executor-token"):
+    monkeypatch.setenv("NVIDIA_EMBED_REVISION", "test-revision-v1")
     monkeypatch.setenv(
         "AGENT_AUTH_JSON",
         json.dumps(
@@ -60,6 +71,34 @@ class _ExecutePolicyAgent:
             strategy=Strategy.GENERIC_RETRY,
             reason="test execution policy permits generic retry",
         )
+
+
+def _decision_snapshot(
+    *,
+    scope_id: str = "demo",
+    agent_id: str = "recovery-observer-api",
+    situation: str,
+    strategy: Strategy = Strategy.GENERIC_RETRY,
+    decision: Decision | None = None,
+) -> dict:
+    committed = decision or _ExecutePolicyAgent().decide(
+        scope_id=scope_id, situation=situation
+    )
+    digest = decision_state_digest(
+        committed,
+        semantic_embedding_space=(
+            "nvidia/nv-embedqa-e5-v5|revision=test-revision-v1|"
+            "dim=1024|contract=query-passage-v1"
+        ),
+    )
+    return issue_decision_snapshot(
+        scope_id=scope_id,
+        agent_id=agent_id,
+        situation=situation,
+        strategy=strategy,
+        decision_digest=digest,
+        signing_secret="test-execution-receipt-secret-123",
+    )
 
 
 def test_rate_limit_response_is_429_with_retry_after(monkeypatch):
@@ -323,6 +362,7 @@ def test_caller_cannot_self_assert_agent_id(monkeypatch):
 
 def test_execute_route_issues_server_signed_receipt(monkeypatch):
     token = _configure_executor(monkeypatch)
+    situation = "replacement card still uses stale merchant token"
     response = aws_lambda.lambda_handler(
         {
             "requestContext": {"http": {"method": "POST"}},
@@ -331,8 +371,9 @@ def test_execute_route_issues_server_signed_receipt(monkeypatch):
             "body": json.dumps(
                 {
                     "scope_id": "demo",
-                    "situation": "replacement card still uses stale merchant token",
+                    "situation": situation,
                     "strategy": "GENERIC_RETRY",
+                    "decision_snapshot": _decision_snapshot(situation=situation),
                 }
             ),
         },
@@ -345,12 +386,15 @@ def test_execute_route_issues_server_signed_receipt(monkeypatch):
     assert receipt["outcome"] == "FAILED"
     assert receipt["effectiveness"] == 0.1
     assert receipt["signature"]
+    assert receipt["version"] == 2
+    assert receipt["decision_snapshot_id"]
+    assert receipt["decision_digest"]
     assert body["policy_decision"]["action"] == "EXECUTE"
-    assert body["policy_decision"]["executable"] is True
 
 
-def test_execute_route_rejects_caller_controlled_scenario(monkeypatch):
+def test_decider_snapshot_can_be_executed_by_separately_authorized_executor(monkeypatch):
     token = _configure_executor(monkeypatch)
+    situation = "planner committed payment retry for executor"
     response = aws_lambda.lambda_handler(
         {
             "requestContext": {"http": {"method": "POST"}},
@@ -359,8 +403,39 @@ def test_execute_route_rejects_caller_controlled_scenario(monkeypatch):
             "body": json.dumps(
                 {
                     "scope_id": "demo",
-                    "situation": "replacement card still uses stale merchant token",
+                    "situation": situation,
                     "strategy": "GENERIC_RETRY",
+                    "decision_snapshot": _decision_snapshot(
+                        situation=situation,
+                        agent_id="recovery-planner-api",
+                    ),
+                }
+            ),
+        },
+        None,
+    )
+    body = json.loads(response["body"])
+    assert response["statusCode"] == 200
+    receipt = body["execution_receipt"]
+    assert receipt["agent_id"] == "recovery-observer-api"
+    assert receipt["decision_agent_id"] == "recovery-planner-api"
+    assert body["policy_decision"]["executable"] is True
+
+
+def test_execute_route_rejects_caller_controlled_scenario(monkeypatch):
+    token = _configure_executor(monkeypatch)
+    situation = "replacement card still uses stale merchant token"
+    response = aws_lambda.lambda_handler(
+        {
+            "requestContext": {"http": {"method": "POST"}},
+            "rawPath": "/execute",
+            "headers": {"X-DecisionVault-Agent-Token": token},
+            "body": json.dumps(
+                {
+                    "scope_id": "demo",
+                    "situation": situation,
+                    "strategy": "GENERIC_RETRY",
+                    "decision_snapshot": _decision_snapshot(situation=situation),
                     "scenario": "transient_issuer_outage",
                 }
             ),
@@ -375,6 +450,7 @@ def test_execute_route_rejects_caller_controlled_scenario(monkeypatch):
 def test_execute_route_uses_server_configured_scenario(monkeypatch):
     token = _configure_executor(monkeypatch)
     monkeypatch.setenv("EXECUTION_SANDBOX_SCENARIO", "transient_issuer_outage")
+    situation = "same caller situation"
     response = aws_lambda.lambda_handler(
         {
             "requestContext": {"http": {"method": "POST"}},
@@ -383,8 +459,9 @@ def test_execute_route_uses_server_configured_scenario(monkeypatch):
             "body": json.dumps(
                 {
                     "scope_id": "demo",
-                    "situation": "same caller situation",
+                    "situation": situation,
                     "strategy": "GENERIC_RETRY",
+                    "decision_snapshot": _decision_snapshot(situation=situation),
                 }
             ),
         },
@@ -398,6 +475,7 @@ def test_execute_route_uses_server_configured_scenario(monkeypatch):
 
 def test_execute_route_blocks_abstained_decision(monkeypatch):
     token = _configure_executor(monkeypatch)
+    situation = "conflicting payment recovery evidence"
 
     class AbstainingAgent:
         def decide(self, *, scope_id: str, situation: str) -> Decision:
@@ -422,8 +500,9 @@ def test_execute_route_blocks_abstained_decision(monkeypatch):
             "body": json.dumps(
                 {
                     "scope_id": "demo",
-                    "situation": "conflicting payment recovery evidence",
+                    "situation": situation,
                     "strategy": "GENERIC_RETRY",
+                    "decision_snapshot": _decision_snapshot(situation=situation),
                 }
             ),
         },
@@ -437,6 +516,7 @@ def test_execute_route_blocks_abstained_decision(monkeypatch):
 
 def test_execute_route_rejects_strategy_not_committed_by_policy(monkeypatch):
     token = _configure_executor(monkeypatch)
+    situation = "payment retry"
     response = aws_lambda.lambda_handler(
         {
             "requestContext": {"http": {"method": "POST"}},
@@ -445,8 +525,12 @@ def test_execute_route_rejects_strategy_not_committed_by_policy(monkeypatch):
             "body": json.dumps(
                 {
                     "scope_id": "demo",
-                    "situation": "payment retry",
+                    "situation": situation,
                     "strategy": "REFRESH_PAYMENT_TOKEN",
+                    "decision_snapshot": _decision_snapshot(
+                        situation=situation,
+                        strategy=Strategy.REFRESH_PAYMENT_TOKEN,
+                    ),
                 }
             ),
         },
@@ -479,6 +563,7 @@ def test_record_rejects_direct_outcome_fields(monkeypatch):
 
 def test_record_returns_existing_episode_for_receipt_replay(monkeypatch):
     token = _configure_executor(monkeypatch)
+    situation = "stale token"
     execute = aws_lambda.lambda_handler(
         {
             "requestContext": {"http": {"method": "POST"}},
@@ -487,8 +572,9 @@ def test_record_returns_existing_episode_for_receipt_replay(monkeypatch):
             "body": json.dumps(
                 {
                     "scope_id": "demo",
-                    "situation": "stale token",
+                    "situation": situation,
                     "strategy": "GENERIC_RETRY",
+                    "decision_snapshot": _decision_snapshot(situation=situation),
                 }
             ),
         },
@@ -648,20 +734,106 @@ def test_execute_removes_advisor_from_critical_path(monkeypatch):
     monkeypatch.setenv(
         "EXECUTION_RECEIPT_SECRET", "test-execution-receipt-secret-123"
     )
+    monkeypatch.setenv("NVIDIA_EMBED_REVISION", "test-revision-v1")
     monkeypatch.setattr(
         aws_lambda,
         "_build_agent",
         lambda *, memory_enabled, agent_id="recovery-planner": AgentWithAdvisor(),
     )
+    situation = "payment retry"
     payload = aws_lambda._execute(
         {
             "scope_id": "demo",
-            "situation": "payment retry",
+            "situation": situation,
             "strategy": "GENERIC_RETRY",
+            "decision_snapshot": _decision_snapshot(
+                situation=situation,
+                agent_id="executor-a",
+            ),
         },
         agent_id="executor-a",
     )
     assert payload["execution_receipt"]["strategy"] == "GENERIC_RETRY"
+
+
+def test_execute_rejects_stale_decision_snapshot_without_receipt(monkeypatch):
+    token = _configure_executor(monkeypatch)
+    situation = "payment retry after memory changed"
+    snapshot = _decision_snapshot(situation=situation)
+
+    class ChangedDecisionAgent:
+        def decide(self, *, scope_id: str, situation: str) -> Decision:
+            return Decision(
+                strategy=Strategy.GENERIC_RETRY,
+                reason="same strategy but newer governed evidence",
+                recalled_episode_ids=("newer-episode",),
+                recalled_producer_agent_ids=("newer-observer",),
+                memory_influenced=True,
+                memory_resolution="FAILED_STRATEGY_AVOIDANCE",
+            )
+
+    monkeypatch.setattr(
+        aws_lambda,
+        "_build_agent",
+        lambda *, memory_enabled, agent_id="recovery-planner": ChangedDecisionAgent(),
+    )
+    response = aws_lambda.lambda_handler(
+        {
+            "requestContext": {"http": {"method": "POST"}},
+            "rawPath": "/execute",
+            "headers": {"X-DecisionVault-Agent-Token": token},
+            "body": json.dumps(
+                {
+                    "scope_id": "demo",
+                    "situation": situation,
+                    "strategy": "GENERIC_RETRY",
+                    "decision_snapshot": snapshot,
+                }
+            ),
+        },
+        None,
+    )
+    body = json.loads(response["body"])
+    assert response["statusCode"] == 409
+    assert body["error"] == "conflict"
+    assert "stale" in body["detail"]
+    assert "execution_receipt" not in body
+
+
+def test_execute_replay_of_same_snapshot_has_stable_receipt_id(monkeypatch):
+    token = _configure_executor(monkeypatch)
+    situation = "stable snapshot replay"
+    snapshot = _decision_snapshot(situation=situation)
+    event = {
+        "requestContext": {"http": {"method": "POST"}},
+        "rawPath": "/execute",
+        "headers": {"X-DecisionVault-Agent-Token": token},
+        "body": json.dumps(
+            {
+                "scope_id": "demo",
+                "situation": situation,
+                "strategy": "GENERIC_RETRY",
+                "decision_snapshot": snapshot,
+            }
+        ),
+    }
+    first = json.loads(aws_lambda.lambda_handler(event, None)["body"])
+    second = json.loads(aws_lambda.lambda_handler(event, None)["body"])
+    assert first["execution_receipt"]["receipt_id"] == second["execution_receipt"]["receipt_id"]
+
+
+def test_lambda_provider_timeouts_leave_platform_deadline_margin(monkeypatch):
+    monkeypatch.setenv("NVIDIA_TIMEOUT_SECONDS", "20")
+    assert aws_lambda._semantic_runtime_timeout() == 12.0
+    assert aws_lambda._advisor_runtime_timeout() == 5.0
+
+    monkeypatch.setenv("NVIDIA_TIMEOUT_SECONDS", "3")
+    assert aws_lambda._semantic_runtime_timeout() == 3.0
+    assert aws_lambda._advisor_runtime_timeout() == 3.0
+
+    monkeypatch.setenv("NVIDIA_TIMEOUT_SECONDS", "0")
+    with pytest.raises(RuntimeError, match="must be positive"):
+        aws_lambda._semantic_runtime_timeout()
 
 
 def test_request_body_and_situation_limits_fail_closed(monkeypatch):

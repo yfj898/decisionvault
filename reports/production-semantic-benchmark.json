@@ -257,7 +257,8 @@
   "cases_are_hand_authored": true,
   "embedding_dimensions": 1024,
   "embedding_model": "nvidia/nv-embedqa-e5-v5",
-  "embedding_space": "nvidia/nv-embedqa-e5-v5|dim=1024|contract=query-passage-v1",
+  "embedding_revision": "decisionvault-prod-r1",
+  "embedding_space": "nvidia/nv-embedqa-e5-v5|revision=decisionvault-prod-r1|dim=1024|contract=query-passage-v1",
   "storage": "decision_memory_heads.semantic_embedding VECTOR(1024)",
   "summary": {
     "benefit_cases": 4,

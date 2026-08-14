@@ -93,6 +93,7 @@ class DecisionAgent:
                 "producer_agent_id": self.agent_id,
             }
         )
+        recorded_at = datetime.now(timezone.utc)
         episode = DecisionEpisode(
             episode_id=str(uuid4()),
             scope_id=scope_id,
@@ -102,7 +103,8 @@ class DecisionAgent:
             effectiveness=effectiveness,
             confidence=confidence,
             evidence=episode_evidence,
-            created_at=(observed_at or datetime.now(timezone.utc)),
+            observed_at=(observed_at or recorded_at),
+            recorded_at=recorded_at,
         )
         self.memory.save(episode)
         return episode

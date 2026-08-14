@@ -50,7 +50,7 @@ class InMemoryEpisodeStore:
             key=lambda match: (
                 match.similarity,
                 match.episode.confidence,
-                match.episode.created_at,
+                match.episode.observed_at,
             ),
             reverse=True,
         )
@@ -78,7 +78,7 @@ class InMemoryEpisodeStore:
             key=lambda match: (
                 match.similarity,
                 match.episode.confidence,
-                match.episode.created_at,
+                match.episode.observed_at,
             ),
             reverse=True,
         )

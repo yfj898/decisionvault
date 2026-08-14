@@ -22,7 +22,7 @@ def semantic_ann_sql(
     return f"""
         SELECT h.episode_id::STRING, h.scope_id, h.situation, h.strategy,
                h.outcome, h.effectiveness, h.confidence, h.evidence,
-               h.created_at,
+               h.observed_at, h.recorded_at,
                h.semantic_embedding <=> {vector_expr} AS cosine_distance
         FROM decision_memory_heads h
         WHERE h.scope_id = {scope_expr}
@@ -44,7 +44,7 @@ def semantic_coverage_sql(
     return f"""
         SELECT h.episode_id::STRING, h.scope_id, h.situation, h.strategy,
                h.outcome, h.effectiveness, h.confidence, h.evidence,
-               h.created_at,
+               h.observed_at, h.recorded_at,
                h.semantic_embedding <=> {vector_expr} AS cosine_distance
         FROM decision_memory_heads h
         WHERE h.scope_id = {scope_expr}
@@ -56,7 +56,7 @@ def semantic_coverage_sql(
           AND COALESCE(upper(h.evidence->>'memory_status'), 'ACTIVE') <> 'REVOKED'
           AND (
             COALESCE(lower(h.evidence->>'pinned'), 'false') = 'true'
-            OR h.created_at >= now() - INTERVAL '90 days'
+            OR h.observed_at >= now() - INTERVAL '90 days'
           )
           AND (
             (h.outcome = 'SUCCESS' AND h.effectiveness >= 0.7)

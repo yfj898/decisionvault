@@ -33,7 +33,8 @@ class DecisionEpisode:
     effectiveness: float
     confidence: float
     evidence: Mapping[str, str] = field(default_factory=dict)
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    observed_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    recorded_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def __post_init__(self) -> None:
         if not self.episode_id:
@@ -46,8 +47,16 @@ class DecisionEpisode:
             raise ValueError("effectiveness must be between 0 and 1")
         if not 0 <= self.confidence <= 1:
             raise ValueError("confidence must be between 0 and 1")
-        if self.created_at.tzinfo is None:
-            raise ValueError("created_at must be timezone-aware")
+        if self.observed_at.tzinfo is None:
+            raise ValueError("observed_at must be timezone-aware")
+        if self.recorded_at.tzinfo is None:
+            raise ValueError("recorded_at must be timezone-aware")
+
+    @property
+    def created_at(self) -> datetime:
+        """Backward-compatible event-time alias for older integrations."""
+
+        return self.observed_at
 
 
 @dataclass(frozen=True, slots=True)

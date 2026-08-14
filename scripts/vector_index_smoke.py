@@ -136,11 +136,12 @@ def run(connection_factory, *, distractor_count: int = 192) -> None:
     insert_sql = """
         INSERT INTO decision_episodes (
             episode_id, scope_id, situation, strategy, outcome,
-            effectiveness, confidence, evidence, embedding, created_at
+            effectiveness, confidence, evidence, embedding,
+            observed_at, recorded_at
         )
         VALUES (
             %s::UUID, %s, %s, %s, %s,
-            %s, %s, %s::JSONB, %s::VECTOR, %s
+            %s, %s, %s::JSONB, %s::VECTOR, %s, %s
         )
     """
 
@@ -161,6 +162,7 @@ def run(connection_factory, *, distractor_count: int = 192) -> None:
                         1.0,
                         json.dumps({"kind": "phase3-target"}),
                         _vector_literal(deterministic_text_embedding(TARGET)),
+                        now,
                         now,
                     ),
                 )
@@ -183,6 +185,7 @@ def run(connection_factory, *, distractor_count: int = 192) -> None:
                             ),
                             _vector_literal(vector),
                             now,
+                            now,
                         ),
                     )
 
@@ -200,6 +203,7 @@ def run(connection_factory, *, distractor_count: int = 192) -> None:
                         1.0,
                         json.dumps({"kind": "phase3-foreign-perfect-match"}),
                         query_literal,
+                        now,
                         now,
                     ),
                 )

@@ -39,7 +39,8 @@ def _memory(
             effectiveness=effectiveness,
             confidence=confidence,
             evidence=evidence,
-            created_at=NOW - timedelta(days=age_days),
+            observed_at=NOW - timedelta(days=age_days),
+            recorded_at=NOW,
         ),
         similarity=similarity,
     )

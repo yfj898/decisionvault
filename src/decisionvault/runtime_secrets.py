@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from threading import RLock
 import time
 
 
@@ -19,6 +20,7 @@ SECRET_KEYS = frozenset(
 _SECRET_CACHE: dict[str, str] | None = None
 _SECRET_CACHE_ARN: str | None = None
 _SECRET_CACHE_AT = 0.0
+_SECRET_LOCK = RLock()
 
 
 def _secret_refresh_seconds() -> float:
@@ -26,13 +28,14 @@ def _secret_refresh_seconds() -> float:
 
 
 def _clear_secret_cache() -> None:
-    global _SECRET_CACHE, _SECRET_CACHE_ARN, _SECRET_CACHE_AT
-    _SECRET_CACHE = None
-    _SECRET_CACHE_ARN = None
-    _SECRET_CACHE_AT = 0.0
+    with _SECRET_LOCK:
+        global _SECRET_CACHE, _SECRET_CACHE_ARN, _SECRET_CACHE_AT
+        _SECRET_CACHE = None
+        _SECRET_CACHE_ARN = None
+        _SECRET_CACHE_AT = 0.0
 
 
-def load_runtime_secrets(*, force: bool = False) -> dict[str, str]:
+def _load_runtime_secrets_locked(*, force: bool = False) -> dict[str, str]:
     """Load the runtime secret with a bounded warm-process refresh interval.
 
     Local development may continue to supply the individual values directly in
@@ -85,15 +88,24 @@ def load_runtime_secrets(*, force: bool = False) -> dict[str, str]:
     return values
 
 
-def hydrate_runtime_secrets(*, force: bool = False) -> None:
-    """Refresh managed sensitive values in the current warm process."""
+def load_runtime_secrets(*, force: bool = False) -> dict[str, str]:
+    """Load a complete secret generation under one warm-process lock."""
 
-    managed = bool(os.getenv("DECISIONVAULT_SECRET_ARN", "").strip())
-    for key, value in load_runtime_secrets(force=force).items():
-        if managed:
-            os.environ[key] = value
-        else:
-            os.environ.setdefault(key, value)
+    with _SECRET_LOCK:
+        return _load_runtime_secrets_locked(force=force)
+
+
+def hydrate_runtime_secrets(*, force: bool = False) -> None:
+    """Refresh one complete managed secret generation atomically in-process."""
+
+    with _SECRET_LOCK:
+        managed = bool(os.getenv("DECISIONVAULT_SECRET_ARN", "").strip())
+        values = _load_runtime_secrets_locked(force=force)
+        for key, value in values.items():
+            if managed:
+                os.environ[key] = value
+            else:
+                os.environ.setdefault(key, value)
 
 
 # Preserve the old test/operator cache-reset seam while using a TTL cache.

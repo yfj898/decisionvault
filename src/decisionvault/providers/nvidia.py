@@ -2,17 +2,26 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
 from decisionvault.domain import Decision, RecalledEpisode
+from decisionvault.providers.http_security import (
+    NVIDIA_API_BASE_URL,
+    nvidia_endpoint,
+    open_nvidia_request,
+    validate_nvidia_base_url,
+)
 
 
 @dataclass(slots=True)
 class NvidiaDecisionAdvisor:
     api_key: str
     model_id: str = "deepseek-ai/deepseek-v4-flash-0731"
-    base_url: str = "https://integrate.api.nvidia.com/v1"
+    base_url: str = NVIDIA_API_BASE_URL
     timeout_seconds: float = 45.0
+
+    def __post_init__(self) -> None:
+        self.base_url = validate_nvidia_base_url(self.base_url)
 
     @property
     def provider_name(self) -> str:
@@ -66,7 +75,7 @@ class NvidiaDecisionAdvisor:
             }
         ).encode("utf-8")
         request = Request(
-            f"{self.base_url.rstrip('/')}/chat/completions",
+            nvidia_endpoint(self.base_url, "chat/completions"),
             data=body,
             headers={
                 "Authorization": f"Bearer {self.api_key}",
@@ -74,6 +83,8 @@ class NvidiaDecisionAdvisor:
             },
             method="POST",
         )
-        with urlopen(request, timeout=self.timeout_seconds) as response:
+        with open_nvidia_request(
+            request, timeout_seconds=self.timeout_seconds
+        ) as response:
             payload = json.loads(response.read())
         return payload["choices"][0]["message"]["content"].strip()

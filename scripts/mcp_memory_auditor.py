@@ -34,6 +34,7 @@ def main() -> int:
             raise SystemExit("NVIDIA_API_KEY is required for --semantic")
         semantic = NvidiaSemanticEmbedder(
             api_key=nvidia_key,
+            revision=os.getenv("NVIDIA_EMBED_REVISION", "").strip(),
             model_id=os.getenv(
                 "NVIDIA_EMBED_MODEL_ID", "nvidia/nv-embedqa-e5-v5"
             ),

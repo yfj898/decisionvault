@@ -3,14 +3,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from typing import Any
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
 from decisionvault.agent.memory_governance import PRODUCTION_SEMANTIC_MIN_SIMILARITY
 from decisionvault.memory.embedding import deterministic_text_embedding
 from decisionvault.memory.governed_query import semantic_ann_sql, semantic_coverage_sql
+from decisionvault.providers.http_security import open_fixed_bearer_request
 
 
 MCP_PROTOCOL_VERSION = "2025-06-18"
+MANAGED_MCP_ENDPOINT = "https://cockroachlabs.cloud/mcp"
 
 
 def _vector_literal(values: list[float]) -> str:
@@ -44,10 +46,15 @@ def _decode_mcp_body(raw: bytes, content_type: str) -> dict[str, Any]:
 class ManagedMcpClient:
     cluster_id: str
     bearer_token: str
-    endpoint: str = "https://cockroachlabs.cloud/mcp"
+    endpoint: str = MANAGED_MCP_ENDPOINT
     timeout_seconds: float = 30.0
     session_id: str | None = None
     _request_id: int = 0
+
+    def __post_init__(self) -> None:
+        if self.endpoint.strip().rstrip("/") != MANAGED_MCP_ENDPOINT:
+            raise ValueError("Managed MCP endpoint is fixed by DecisionVault")
+        self.endpoint = MANAGED_MCP_ENDPOINT
 
     def _next_id(self) -> int:
         self._request_id += 1
@@ -69,7 +76,11 @@ class ManagedMcpClient:
             headers=headers,
             method="POST",
         )
-        with urlopen(request, timeout=self.timeout_seconds) as response:
+        with open_fixed_bearer_request(
+            request,
+            allowed_url=MANAGED_MCP_ENDPOINT,
+            timeout_seconds=self.timeout_seconds,
+        ) as response:
             if not self.session_id:
                 self.session_id = response.headers.get("mcp-session-id")
             return _decode_mcp_body(
@@ -198,7 +209,7 @@ class MemoryAuditorAgent:
                     "evidence->>'producer_agent_id' AS producer_agent_id "
                     f"FROM {'decision_memory_heads' if semantic_mode else 'decision_episodes'} "
                     f"WHERE scope_id = {scope_literal}{space_clause} "
-                    "ORDER BY created_at DESC LIMIT 5"
+                    "ORDER BY observed_at DESC LIMIT 5"
                 ),
             },
         )

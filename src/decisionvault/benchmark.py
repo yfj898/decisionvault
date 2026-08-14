@@ -84,7 +84,8 @@ def _episode(
         effectiveness=effectiveness,
         confidence=confidence,
         evidence={"benchmark": "phase8"},
-        created_at=datetime(2026, 8, 13, 12, 0, tzinfo=timezone.utc),
+        observed_at=datetime(2026, 8, 13, 12, 0, tzinfo=timezone.utc),
+        recorded_at=datetime(2026, 8, 13, 12, 0, tzinfo=timezone.utc),
     )
 
 

@@ -132,7 +132,8 @@ def test_cockroach_store_save_binds_vector_and_commits():
         outcome=Outcome.FAILED,
         effectiveness=0.1,
         confidence=0.9,
-        created_at=datetime.now(timezone.utc),
+        observed_at=datetime.now(timezone.utc),
+        recorded_at=datetime.now(timezone.utc),
     )
 
     store.save(episode)
@@ -149,7 +150,8 @@ def test_cockroach_store_save_binds_vector_and_commits():
 
 
 def test_cockroach_store_recall_maps_scoped_vector_result():
-    created_at = datetime.now(timezone.utc)
+    observed_at = datetime.now(timezone.utc)
+    recorded_at = observed_at
     row = (
         "00000000-0000-0000-0000-000000000001",
         "scope-1",
@@ -159,7 +161,8 @@ def test_cockroach_store_recall_maps_scoped_vector_result():
         0.1,
         0.9,
         {"source": "test"},
-        created_at,
+        observed_at,
+        recorded_at,
         0.2,
     )
     conn = FakeConnection(rows=[row])
@@ -215,9 +218,14 @@ def test_nvidia_production_embedding_width_is_native_1024():
 
 
 def test_semantic_embedding_space_binds_model_dimensions_and_contract():
-    assert semantic_embedding_space("nvidia/nv-embedqa-e5-v5") == (
-        "nvidia/nv-embedqa-e5-v5|dim=1024|contract=query-passage-v1"
+    assert semantic_embedding_space(
+        "nvidia/nv-embedqa-e5-v5", revision="decisionvault-prod-r1"
+    ) == (
+        "nvidia/nv-embedqa-e5-v5|revision=decisionvault-prod-r1|dim=1024|contract=query-passage-v1"
     )
+
+    with pytest.raises(ValueError, match="revision"):
+        semantic_embedding_space("nvidia/nv-embedqa-e5-v5", revision="")
 
 
 def test_semantic_store_requires_explicit_embedding_space():
@@ -282,20 +290,22 @@ def test_semantic_late_event_is_history_only_and_cannot_replace_newer_head():
         effectiveness=0.1,
         confidence=1.0,
         evidence={"producer_agent_id": "agent-a"},
-        created_at=incoming_time,
+        observed_at=incoming_time,
+        recorded_at=newer_time,
     )
 
     store.save(episode)
 
     statements = conn.cursor_value.executions
-    assert "SELECT max(created_at)" in statements[0][0]
+    assert "SELECT max(observed_at)" in statements[0][0]
     assert "INSERT INTO decision_episodes" in statements[1][0]
     assert not any("INSERT INTO decision_memory_heads" in sql for sql, _ in statements)
     assert conn.committed is True
 
 
 def test_semantic_governed_recall_merges_ann_with_unbounded_threshold_coverage():
-    created_at = datetime.now(timezone.utc)
+    observed_at = datetime.now(timezone.utc)
+    recorded_at = observed_at
     row = (
         "00000000-0000-0000-0000-000000000001",
         "scope-1",
@@ -305,7 +315,8 @@ def test_semantic_governed_recall_merges_ann_with_unbounded_threshold_coverage()
         0.1,
         0.9,
         {"producer_agent_id": "agent-a"},
-        created_at,
+        observed_at,
+        recorded_at,
         0.2,
     )
     conn = FakeConnection(rows=[row])
@@ -366,13 +377,14 @@ def test_semantic_supersession_uses_atomic_current_head_compare_and_delete():
             "producer_agent_id": "agent-a",
             "supersedes_episode_id": "00000000-0000-0000-0000-000000000001",
         },
-        created_at=datetime.now(timezone.utc),
+        observed_at=datetime.now(timezone.utc),
+        recorded_at=datetime.now(timezone.utc),
     )
 
     store.save(episode)
 
     statements = conn.cursor_value.executions
-    assert "SELECT max(created_at)" in statements[0][0]
+    assert "SELECT max(observed_at)" in statements[0][0]
     delete_sql, delete_params = statements[1]
     assert "DELETE FROM decision_memory_heads" in delete_sql
     assert "producer_agent_id = %s" in delete_sql
@@ -382,12 +394,12 @@ def test_semantic_supersession_uses_atomic_current_head_compare_and_delete():
         "scope-1",
         "agent-a",
         "00000000-0000-0000-0000-000000000001",
-        episode.created_at,
+        episode.observed_at,
     )
     assert "INSERT INTO decision_episodes" in statements[2][0]
     assert "INSERT INTO decision_memory_heads" in statements[3][0]
     assert "ON CONFLICT" in statements[3][0]
-    assert "excluded.created_at > decision_memory_heads.created_at" in statements[3][0]
+    assert "excluded.observed_at > decision_memory_heads.observed_at" in statements[3][0]
 
 
 def test_supersession_loses_if_normal_write_already_replaced_current_head():
@@ -410,14 +422,15 @@ def test_supersession_loses_if_normal_write_already_replaced_current_head():
             "producer_agent_id": "agent-a",
             "supersedes_episode_id": "00000000-0000-0000-0000-000000000001",
         },
-        created_at=datetime.now(timezone.utc),
+        observed_at=datetime.now(timezone.utc),
+        recorded_at=datetime.now(timezone.utc),
     )
 
     with pytest.raises(SupersessionWriteConflict, match="current governed head"):
         store.save(episode)
 
     assert len(conn.cursor_value.executions) == 2
-    assert "SELECT max(created_at)" in conn.cursor_value.executions[0][0]
+    assert "SELECT max(observed_at)" in conn.cursor_value.executions[0][0]
     assert "DELETE FROM decision_memory_heads" in conn.cursor_value.executions[1][0]
     assert conn.committed is False
 

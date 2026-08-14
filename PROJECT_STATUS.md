@@ -15,7 +15,26 @@ Baseline:
 8 tests PASS
 
 Current local verification:
-113 tests PASS
+138 tests PASS
+Production hardening v5: PASS (fixed NVIDIA/MCP bearer destinations / reproducible Lambda CA+dependency build / explicit embedding revision / observed-vs-recorded audit time / signed decision snapshot TOCTOU binding / decider-executor role separation)
+NVIDIA credential-bearing origin allowlist + redirect rejection: PASS
+Embedding generation `decisionvault-prod-r1` included in semantic space: PASS
+Cross-revision recall isolation + CAS migration regression: PASS
+Real CockroachDB production-memory-v5 migration: 19/19 statements PASS
+Real CockroachDB observed/recorded columns: NOT NULL + compatibility defaults PASS
+Real CockroachDB current rows after v5 verification: episodes=0 / heads=0 / revocations=0
+Post-v5 production ANN EXPLAIN: `vector search` + `decision_memory_heads_scope_space_semantic_vec_idx` PASS
+Post-v5 production semantic benchmark: 14/14 PASS
+Clean git-archive Lambda dependency resolution: psycopg/psycopg-binary 3.3.4 PASS
+Clean git-archive Lambda package includes explicit public CockroachDB CA: PASS
+Hosted readiness revision/head-space/provider-origin checks: HTTP 200 / PASS
+Hosted `/demo`: HTTP 200 / PASS / cleaned
+Hosted `/governance-demo`: HTTP 200 / `CONFLICT_ABSTAIN` / cleaned
+Hosted cross-role planner snapshot → observer execute/record → planner recall: PASS / cleaned
+Hosted outcome serialization exposes distinct `observed_at` + `recorded_at`: PASS
+Lambda post-v5 deployment: Active / Successful
+Lambda provider deadline budget: semantic <=12s / advisor <=5s inside 30s function timeout PASS
+Managed MCP v5 live re-run: NOT RUN (no current MCP API key / cluster ID configured locally); code-level auditor uses the same production ANN + coverage SQL builders and exact fixed Cockroach MCP endpoint
 Production hardening v4: PASS (real production DVI query / shared MCP audit SQL / hot secret refresh / compromised-producer retirement / fail-closed readiness / advisor-free execution / input bounds / long-term receipt replay)
 Real CockroachDB production ANN EXPLAIN: `vector search` + `decision_memory_heads_scope_space_semantic_vec_idx` PASS
 Production exact-threshold coverage remains unbounded and scope-scanned for correctness: PASS

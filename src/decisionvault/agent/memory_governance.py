@@ -191,7 +191,7 @@ class ConflictAwareMemoryResolver:
         fresh: list[RecalledEpisode] = []
         for item in relevant:
             pinned = str(item.episode.evidence.get("pinned", "false")).lower() == "true"
-            age_days = max(0.0, (now - item.episode.created_at).total_seconds() / 86400.0)
+            age_days = max(0.0, (now - item.episode.observed_at).total_seconds() / 86400.0)
             if pinned or age_days <= self.max_age_days:
                 fresh.append(item)
 
@@ -203,13 +203,13 @@ class ConflictAwareMemoryResolver:
             producer = self._producer_id(item)
             key = (producer or item.episode.episode_id, item.episode.strategy)
             current = latest.get(key)
-            if current is None or item.episode.created_at > current.episode.created_at:
+            if current is None or item.episode.observed_at > current.episode.observed_at:
                 latest[key] = item
         return list(latest.values())
 
     def _base_weight(self, item: RecalledEpisode, *, now: datetime) -> float:
         episode = item.episode
-        age_days = max(0.0, (now - episode.created_at).total_seconds() / 86400.0)
+        age_days = max(0.0, (now - episode.observed_at).total_seconds() / 86400.0)
         recency = 1.0 if self.max_age_days <= 0 else max(
             0.25, 1.0 - (age_days / self.max_age_days)
         )

@@ -1,10 +1,25 @@
 from __future__ import annotations
 
-from decisionvault.mcp_auditor import MemoryAuditorAgent, _decode_mcp_body
+import pytest
+
+from decisionvault.mcp_auditor import (
+    ManagedMcpClient,
+    MemoryAuditorAgent,
+    _decode_mcp_body,
+)
 
 
 def test_empty_notification_response_is_valid():
     assert _decode_mcp_body(b"", "application/json") == {}
+
+
+def test_managed_mcp_bearer_endpoint_is_fixed():
+    with pytest.raises(ValueError, match="endpoint is fixed"):
+        ManagedMcpClient(
+            cluster_id="cluster",
+            bearer_token="placeholder-token",
+            endpoint="https://attacker.example/mcp",
+        )
 
 
 class FakeMcpClient:

@@ -92,11 +92,11 @@ class CockroachVectorMemoryStore:
                 INSERT INTO decision_episodes (
                     episode_id, scope_id, situation, strategy, outcome,
                     effectiveness, confidence, evidence, execution_receipt_id,
-                    supersedes_episode_id, embedding, created_at
+                    supersedes_episode_id, embedding, observed_at, recorded_at
                 )
                 VALUES (
                     %s::UUID, %s, %s, %s, %s,
-                    %s, %s, %s::JSONB, %s, %s::UUID, %s::VECTOR, %s
+                    %s, %s, %s::JSONB, %s, %s::UUID, %s::VECTOR, %s, %s
                 )
             """
             params = (
@@ -111,7 +111,8 @@ class CockroachVectorMemoryStore:
                 execution_receipt_id,
                 supersedes_episode_id,
                 vector,
-                episode.created_at,
+                episode.observed_at,
+                episode.recorded_at,
             )
         else:
             sql = """
@@ -119,12 +120,13 @@ class CockroachVectorMemoryStore:
                     episode_id, scope_id, situation, strategy, outcome,
                     effectiveness, confidence, evidence, execution_receipt_id,
                     supersedes_episode_id, embedding,
-                    semantic_embedding, semantic_embedding_space, created_at
+                    semantic_embedding, semantic_embedding_space,
+                    observed_at, recorded_at
                 )
                 VALUES (
                     %s::UUID, %s, %s, %s, %s,
                     %s, %s, %s::JSONB, %s, %s::UUID, %s::VECTOR,
-                    %s::VECTOR, %s, %s
+                    %s::VECTOR, %s, %s, %s
                 )
             """
             params = (
@@ -141,7 +143,8 @@ class CockroachVectorMemoryStore:
                 vector,
                 semantic_vector,
                 semantic_space,
-                episode.created_at,
+                episode.observed_at,
+                episode.recorded_at,
             )
         def write_transaction() -> None:
             conn = self.connection_factory()
@@ -158,7 +161,7 @@ class CockroachVectorMemoryStore:
                         # supersession, or revocation removed/replaced the head.
                         cur.execute(
                             """
-                            SELECT max(created_at)
+                            SELECT max(observed_at)
                             FROM decision_episodes
                             WHERE scope_id = %s
                               AND strategy = %s
@@ -178,7 +181,7 @@ class CockroachVectorMemoryStore:
                         )
                         incoming_is_newest = (
                             latest_observed_at is None
-                            or episode.created_at > latest_observed_at
+                            or episode.observed_at > latest_observed_at
                         )
                     if semantic_vector is not None and supersedes_episode_id:
                         if not producer_agent_id:
@@ -195,14 +198,14 @@ class CockroachVectorMemoryStore:
                             WHERE scope_id = %s
                               AND producer_agent_id = %s
                               AND episode_id = %s::UUID
-                              AND created_at < %s
+                              AND observed_at < %s
                             RETURNING episode_id::STRING
                             """,
                             (
                                 episode.scope_id,
                                 producer_agent_id,
                                 supersedes_episode_id,
-                                episode.created_at,
+                                episode.observed_at,
                             ),
                         )
                         deleted = cur.fetchone()
@@ -222,11 +225,12 @@ class CockroachVectorMemoryStore:
                                 scope_id, producer_agent_id, strategy, episode_id,
                                 situation, outcome, effectiveness, confidence,
                                 evidence, execution_receipt_id, supersedes_episode_id,
-                                semantic_embedding, semantic_embedding_space, created_at
+                                semantic_embedding, semantic_embedding_space,
+                                observed_at, recorded_at
                             ) VALUES (
                                 %s, %s, %s, %s::UUID,
                                 %s, %s, %s, %s,
-                                %s::JSONB, %s, %s::UUID, %s::VECTOR, %s, %s
+                                %s::JSONB, %s, %s::UUID, %s::VECTOR, %s, %s, %s
                             )
                             ON CONFLICT (scope_id, producer_agent_id, strategy)
                             DO UPDATE SET
@@ -240,8 +244,9 @@ class CockroachVectorMemoryStore:
                                 supersedes_episode_id = excluded.supersedes_episode_id,
                                 semantic_embedding = excluded.semantic_embedding,
                                 semantic_embedding_space = excluded.semantic_embedding_space,
-                                created_at = excluded.created_at
-                            WHERE excluded.created_at > decision_memory_heads.created_at
+                                observed_at = excluded.observed_at,
+                                recorded_at = excluded.recorded_at
+                            WHERE excluded.observed_at > decision_memory_heads.observed_at
                             """,
                             (
                                 episode.scope_id,
@@ -257,7 +262,8 @@ class CockroachVectorMemoryStore:
                                 supersedes_episode_id,
                                 semantic_vector,
                                 semantic_space,
-                                episode.created_at,
+                                episode.observed_at,
+                                episode.recorded_at,
                             ),
                         )
                 conn.commit()
@@ -438,7 +444,8 @@ class CockroachVectorMemoryStore:
                     effectiveness,
                     confidence,
                     evidence,
-                    created_at,
+                    observed_at,
+                    recorded_at,
                     semantic_embedding <=> %s::VECTOR AS cosine_distance
                 FROM decision_memory_heads
                 WHERE scope_id = %s
@@ -451,7 +458,7 @@ class CockroachVectorMemoryStore:
                   AND COALESCE(upper(evidence->>'memory_status'), 'ACTIVE') <> 'REVOKED'
                   AND (
                     COALESCE(lower(evidence->>'pinned'), 'false') = 'true'
-                    OR created_at >= now() - INTERVAL '90 days'
+                    OR observed_at >= now() - INTERVAL '90 days'
                   )
                   AND (
                     (outcome = 'SUCCESS' AND effectiveness >= 0.7)
@@ -473,7 +480,8 @@ class CockroachVectorMemoryStore:
                     effectiveness,
                     confidence,
                     evidence,
-                    created_at,
+                    observed_at,
+                    recorded_at,
                     embedding <=> %s::VECTOR AS cosine_distance
                 FROM decision_episodes
                 WHERE scope_id = %s
@@ -508,7 +516,7 @@ class CockroachVectorMemoryStore:
 
         recalled: list[RecalledEpisode] = []
         for row in rows:
-            distance = max(0.0, min(1.0, float(row[9])))
+            distance = max(0.0, min(1.0, float(row[10])))
             recalled.append(
                 RecalledEpisode(
                     episode=DecisionEpisode(
@@ -520,7 +528,8 @@ class CockroachVectorMemoryStore:
                         effectiveness=float(row[5]),
                         confidence=float(row[6]),
                         evidence=row[7] or {},
-                        created_at=row[8],
+                        observed_at=row[8],
+                        recorded_at=row[9],
                     ),
                     similarity=1.0 - distance,
                 )
@@ -585,7 +594,7 @@ class CockroachVectorMemoryStore:
                     merged = {row[0]: row for row in ann_rows}
                     for row in coverage_rows:
                         merged[row[0]] = row
-                    return sorted(merged.values(), key=lambda row: float(row[9]))
+                    return sorted(merged.values(), key=lambda row: float(row[10]))
                 finally:
                     conn.close()
 
@@ -596,7 +605,7 @@ class CockroachVectorMemoryStore:
             sql = """
                 SELECT e.episode_id::STRING, e.scope_id, e.situation, e.strategy,
                        e.outcome, e.effectiveness, e.confidence, e.evidence,
-                       e.created_at,
+                       e.observed_at, e.recorded_at,
                        e.embedding <=> %s::VECTOR AS cosine_distance
                 FROM decision_episodes e
                 WHERE e.scope_id = %s
@@ -621,7 +630,7 @@ class CockroachVectorMemoryStore:
 
         recalled: list[RecalledEpisode] = []
         for row in rows:
-            distance = max(0.0, min(1.0, float(row[9])))
+            distance = max(0.0, min(1.0, float(row[10])))
             recalled.append(
                 RecalledEpisode(
                     episode=DecisionEpisode(
@@ -633,7 +642,8 @@ class CockroachVectorMemoryStore:
                         effectiveness=float(row[5]),
                         confidence=float(row[6]),
                         evidence=row[7] or {},
-                        created_at=row[8],
+                        observed_at=row[8],
+                        recorded_at=row[9],
                     ),
                     similarity=1.0 - distance,
                 )

@@ -3,8 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import os
+import re
+from urllib.parse import quote
 
 from decisionvault.domain import Decision, RecalledEpisode
+from decisionvault.providers.http_security import open_fixed_bearer_request
 
 
 @dataclass(slots=True)
@@ -17,6 +20,12 @@ class BedrockTextProvider:
 
     model_id: str
     region_name: str = "us-east-1"
+
+    def __post_init__(self) -> None:
+        if not re.fullmatch(r"[a-z0-9-]+", self.region_name):
+            raise ValueError("Bedrock region contains unsupported characters")
+        if not self.model_id.strip():
+            raise ValueError("Bedrock model_id is required")
 
     def invoke_json(self, payload: dict) -> dict:
         import boto3
@@ -39,13 +48,14 @@ class BedrockTextProvider:
     ) -> str:
         bearer_token = os.getenv("AWS_BEARER_TOKEN_BEDROCK", "").strip()
         if bearer_token:
-            from urllib.request import Request, urlopen
+            from urllib.request import Request
 
+            endpoint = (
+                f"https://bedrock-runtime.{self.region_name}.amazonaws.com/"
+                f"model/{quote(self.model_id, safe='')}/converse"
+            )
             request = Request(
-                url=(
-                    f"https://bedrock-runtime.{self.region_name}.amazonaws.com/"
-                    f"model/{self.model_id}/converse"
-                ),
+                url=endpoint,
                 headers={
                     "Authorization": f"Bearer {bearer_token}",
                     "Content-Type": "application/json",
@@ -71,7 +81,11 @@ class BedrockTextProvider:
                 }).encode("utf-8"),
                 method="POST",
             )
-            with urlopen(request, timeout=30) as response:
+            with open_fixed_bearer_request(
+                request,
+                allowed_url=endpoint,
+                timeout_seconds=30,
+            ) as response:
                 payload = json.loads(response.read())
             parts = payload["output"]["message"]["content"]
             return " ".join(
