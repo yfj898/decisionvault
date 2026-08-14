@@ -34,7 +34,11 @@ decision:
 4. unpinned memory older than the configured age window (90 days by default) is
    ignored;
 5. production ANN retrieval reads the governed-head table, whose primary key
-   keeps only one current candidate per producer + strategy before top-K;
+   keeps only one current candidate per producer + strategy before ANN ranking;
+   production recall also pre-filters revoked, stale, UNKNOWN, low-confidence
+   failure, and low-effectiveness success heads before ranking, then over-fetches
+   up to 32 governed candidates so the resolver is not constrained by the old
+   top-5 boundary;
 6. successful and failed outcome evidence are aggregated separately;
 7. producer identity/scope/permission/trust comes from a server-side token grant,
    never from a caller-supplied `agent_id`; unknown producers receive a
@@ -61,7 +65,7 @@ policy output                                       → safe default + conflict 
 After the governance implementation, the full repository test suite is:
 
 ```text
-51 passed
+85 passed
 ```
 
 ## Real CockroachDB Cloud + semantic embedding smoke
@@ -112,7 +116,7 @@ inserted into the policy path.
 ```text
 Local deterministic benchmark:        56 / 56 PASS
 CockroachDB Cloud deterministic:       28 / 28 PASS
-Native 1024D production semantic:      12 / 12 PASS
+Native 1024D production semantic:      14 / 14 PASS
 
 Benefit target accuracy, Memory ON:  100%
 Benefit target accuracy, Memory OFF:   0%
@@ -123,7 +127,7 @@ Cross-scope leakage, Memory ON:         0%
 ```
 
 The first two suites are deterministic regression/causal-ablation evidence. The
-separate `12/12` production semantic suite is hand-authored and covers same-scope
+separate `14/14` production semantic suite is hand-authored and covers same-scope
 distractors, cross-scope filtering, contradictions, stale memory, supersession,
 and candidate crowding. The safety layer therefore preserves the original Memory
 ON/OFF behavioral advantage while also being exercised on the hosted retrieval
@@ -134,7 +138,33 @@ representation.
 The protected `/record` API now accepts an optional `supersedes_episode_id`.
 This provides a persistent correction handle without deleting immutable history:
 the replacement episode remains in history while the obsolete governed head is
-removed from future production recall.
+removed from future production recall. The final current-head check is enforced
+inside the same CockroachDB write transaction as the history insert/head UPSERT:
+the old head is conditionally deleted by `(scope_id, producer_agent_id,
+episode_id) ... RETURNING`, so a concurrent normal write that already replaced
+the target turns the correction into an explicit conflict instead of allowing a
+stale supersession to commit.
+
+The explanation-only advisor receives only the episode IDs surfaced by the
+governance result. Raw ANN candidates rejected by relevance/lifecycle governance
+are not passed to the model explanation layer.
+
+Follow-up live verification on the real CockroachDB Cloud + NVIDIA semantic path
+also exercised the previously unsafe supersession interleaving:
+
+```text
+prevalidated old head                         PASS
+normal write replaced that head               PASS
+late supersession rejected by transactional CAS PASS
+stale correction history rows                 0
+cloud supersession-vs-normal-write             PASS
+```
+
+The production semantic suite was expanded from 12 to 14 hand-authored cases.
+The two new cases cover six distinct heads with a lower-ranked independent
+contradiction, and stale/revoked candidate crowding ahead of fresh admissible
+evidence. The complete real Cloud + native-1024D suite passes `14/14`, and all
+temporary benchmark rows are cleaned afterward.
 
 ## Trust boundary
 

@@ -11,6 +11,9 @@ from decisionvault.agent.policy import OutcomeAwarePolicy
 from decisionvault.providers.base import DecisionAdvisor
 
 
+GOVERNANCE_CANDIDATE_LIMIT = 32
+
+
 @dataclass(slots=True)
 class DecisionAgent:
     memory: MemoryStore
@@ -21,7 +24,11 @@ class DecisionAgent:
 
     def decide(self, *, scope_id: str, situation: str) -> Decision:
         recalled = (
-            self.memory.recall(scope_id=scope_id, situation=situation, limit=5)
+            self.memory.recall(
+                scope_id=scope_id,
+                situation=situation,
+                limit=GOVERNANCE_CANDIDATE_LIMIT,
+            )
             if self.memory_enabled
             else []
         )
@@ -29,11 +36,18 @@ class DecisionAgent:
         if self.advisor is None:
             return decision
 
+        governed_episode_ids = set(decision.recalled_episode_ids)
+        governed_recalled = [
+            item
+            for item in recalled
+            if item.episode.episode_id in governed_episode_ids
+        ]
+
         try:
             explanation = self.advisor.explain(
                 situation=situation,
                 decision=decision,
-                recalled=recalled,
+                recalled=governed_recalled,
             ).strip()
         except Exception:
             # The model is explicitly non-authoritative. Provider failures must

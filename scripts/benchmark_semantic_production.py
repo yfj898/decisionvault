@@ -11,6 +11,7 @@ from decisionvault.agent.memory_governance import (
     PRODUCTION_SEMANTIC_MIN_SIMILARITY,
     ConflictAwareMemoryResolver,
 )
+from decisionvault.agent.engine import GOVERNANCE_CANDIDATE_LIMIT
 from decisionvault.agent.policy import OutcomeAwarePolicy
 from decisionvault.domain import Strategy
 from decisionvault.memory.cockroach import CockroachVectorMemoryStore
@@ -104,7 +105,7 @@ def main() -> int:
             recalled = store.recall(
                 scope_id=query_scope,
                 situation=case.query,
-                limit=5,
+                limit=GOVERNANCE_CANDIDATE_LIMIT,
             )
             decision = policy.decide(recalled=recalled)
             off = policy.decide(recalled=[])

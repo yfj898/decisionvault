@@ -69,12 +69,10 @@
       "family": "low_confidence_control",
       "memory_influenced": false,
       "passed": true,
-      "recalled_count": 1,
-      "recalled_producers": [
-        "uncertain-observer"
-      ],
+      "recalled_count": 0,
+      "recalled_producers": [],
       "resolution": "NO_SIGNAL",
-      "top_similarity": 0.51404090906767
+      "top_similarity": null
     },
     {
       "actual_strategy": "GENERIC_RETRY",
@@ -84,12 +82,10 @@
       "family": "low_effectiveness_control",
       "memory_influenced": false,
       "passed": true,
-      "recalled_count": 1,
-      "recalled_producers": [
-        "billing-observer-b"
-      ],
+      "recalled_count": 0,
+      "recalled_producers": [],
       "resolution": "NO_SIGNAL",
-      "top_similarity": 0.4977123695011034
+      "top_similarity": null
     },
     {
       "actual_strategy": "GENERIC_RETRY",
@@ -141,10 +137,10 @@
       "family": "stale_control",
       "memory_influenced": false,
       "passed": true,
-      "recalled_count": 1,
+      "recalled_count": 0,
       "recalled_producers": [],
       "resolution": "NO_SIGNAL",
-      "top_similarity": 0.4459564864957106
+      "top_similarity": null
     },
     {
       "actual_strategy": "REFRESH_PAYMENT_TOKEN",
@@ -176,6 +172,37 @@
       ],
       "resolution": "CONFLICT_ABSTAIN",
       "top_similarity": 0.602410526014895
+    },
+    {
+      "actual_strategy": "GENERIC_RETRY",
+      "case_id": "distinct-head-conflict-crowding",
+      "conflict": true,
+      "expected_strategy": "GENERIC_RETRY",
+      "family": "candidate_crowding_control",
+      "memory_influenced": false,
+      "passed": true,
+      "recalled_count": 2,
+      "recalled_producers": [
+        "refresh-success-observer",
+        "refresh-failure-observer"
+      ],
+      "resolution": "CONFLICT_ABSTAIN",
+      "top_similarity": 0.5699559118644654
+    },
+    {
+      "actual_strategy": "REFRESH_PAYMENT_TOKEN",
+      "case_id": "stale-revoked-crowding",
+      "conflict": false,
+      "expected_strategy": "REFRESH_PAYMENT_TOKEN",
+      "family": "candidate_crowding_control",
+      "memory_influenced": true,
+      "passed": true,
+      "recalled_count": 1,
+      "recalled_producers": [
+        "fresh-failure-observer"
+      ],
+      "resolution": "GOVERNED_MEMORY",
+      "top_similarity": 0.5759553321173887
     }
   ],
   "cases_are_hand_authored": true,
@@ -185,10 +212,10 @@
   "summary": {
     "benefit_cases": 4,
     "benefit_pass_rate": 1.0,
-    "control_cases": 8,
+    "control_cases": 10,
     "control_pass_rate": 1.0,
     "pass_rate": 1.0,
-    "passed_cases": 12,
-    "total_cases": 12
+    "passed_cases": 14,
+    "total_cases": 14
   }
 }

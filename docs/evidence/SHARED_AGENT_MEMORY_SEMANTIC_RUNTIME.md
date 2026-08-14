@@ -78,7 +78,7 @@ The deterministic/hash regression path retains its historical `0.30` relevance
 gate. Production E5-v5 retrieval uses a separately calibrated `0.40` gate. The
 calibration was driven by a hand-authored semantic benchmark: the lowest benefit
 case scored `0.4810`, while an irrelevant same-scope distractor scored `0.3575`.
-The production semantic suite passes `12/12` at `0.40`.
+The production semantic suite passes `14/14` at `0.40`.
 
 ## Hosted AWS verification
 

@@ -19,6 +19,19 @@ class FailingAdvisor:
         raise RuntimeError("provider unavailable")
 
 
+class CapturingAdvisor:
+    provider_name = "test:capturing"
+
+    def __init__(self):
+        self.recalled_ids = ()
+
+    def explain(self, **kwargs) -> str:
+        self.recalled_ids = tuple(
+            item.episode.episode_id for item in kwargs["recalled"]
+        )
+        return "The explanation only sees evidence admitted by memory governance."
+
+
 def _seed_failed_generic(store: InMemoryEpisodeStore, scope_id: str) -> None:
     seed_agent = DecisionAgent(memory=store)
     situation = "payment failed after card replacement and token may be stale"
@@ -69,3 +82,29 @@ def test_model_metadata_defaults_to_none_for_policy_only_decision():
 
     assert decision.model_provider is None
     assert decision.model_explanation is None
+
+
+def test_advisor_only_receives_governed_memory_evidence():
+    store = InMemoryEpisodeStore()
+    producer = DecisionAgent(memory=store, agent_id="observer")
+    producer.record_outcome(
+        scope_id="scope-1",
+        situation="shipping parcel destination postal code correction",
+        decision=Decision(
+            strategy=Strategy.VERIFY_BILLING_PROFILE,
+            reason="irrelevant low-similarity evidence",
+        ),
+        outcome=Outcome.SUCCESS,
+        effectiveness=0.95,
+    )
+    advisor = CapturingAdvisor()
+    agent = DecisionAgent(memory=store, advisor=advisor, agent_id="planner")
+
+    decision = agent.decide(
+        scope_id="scope-1",
+        situation="replacement card payment token is stale",
+    )
+
+    assert decision.memory_influenced is False
+    assert decision.recalled_episode_ids == ()
+    assert advisor.recalled_ids == ()

@@ -5,7 +5,10 @@ from datetime import datetime, timezone
 import pytest
 
 from decisionvault.domain import DecisionEpisode, Outcome, Strategy
-from decisionvault.memory.cockroach import CockroachVectorMemoryStore
+from decisionvault.memory.cockroach import (
+    CockroachVectorMemoryStore,
+    SupersessionWriteConflict,
+)
 from decisionvault.memory.connection import psycopg_connection_factory
 from decisionvault.memory.embedding import (
     NVIDIA_EMBEDDING_DIMENSIONS,
@@ -30,6 +33,11 @@ class FakeCursor:
 
     def fetchall(self):
         return self.rows
+
+    def fetchone(self):
+        if not self.rows:
+            return None
+        return self.rows[0]
 
 
 class FakeConnection:
@@ -202,4 +210,77 @@ def test_cockroach_store_uses_semantic_heads_for_production_recall():
     sql, params = conn.cursor_value.executions[0]
     assert "FROM decision_memory_heads" in sql
     assert "semantic_embedding <=>" in sql
+    assert "memory_status" in sql
+    assert "INTERVAL '90 days'" in sql
+    assert "outcome = 'SUCCESS' AND effectiveness >= 0.7" in sql
+    assert "outcome = 'FAILED' AND confidence >= 0.6" in sql
     assert params[0] == "[0.25000000,0.75000000]"
+
+
+def test_semantic_supersession_uses_atomic_current_head_compare_and_delete():
+    conn = FakeConnection(rows=[("00000000-0000-0000-0000-000000000001",)])
+    store = CockroachVectorMemoryStore(
+        connection_factory=lambda: conn,
+        embedder=lambda _: [1.0, 0.0],
+        semantic_embedder=lambda _: [0.75, 0.25],
+    )
+    episode = DecisionEpisode(
+        episode_id="00000000-0000-0000-0000-000000000002",
+        scope_id="scope-1",
+        situation="corrected payment recovery evidence",
+        strategy=Strategy.REFRESH_PAYMENT_TOKEN,
+        outcome=Outcome.SUCCESS,
+        effectiveness=0.95,
+        confidence=1.0,
+        evidence={
+            "producer_agent_id": "agent-a",
+            "supersedes_episode_id": "00000000-0000-0000-0000-000000000001",
+        },
+        created_at=datetime.now(timezone.utc),
+    )
+
+    store.save(episode)
+
+    statements = conn.cursor_value.executions
+    delete_sql, delete_params = statements[0]
+    assert "DELETE FROM decision_memory_heads" in delete_sql
+    assert "producer_agent_id = %s" in delete_sql
+    assert "episode_id = %s::UUID" in delete_sql
+    assert "RETURNING episode_id::STRING" in delete_sql
+    assert delete_params == (
+        "scope-1",
+        "agent-a",
+        "00000000-0000-0000-0000-000000000001",
+    )
+    assert "INSERT INTO decision_episodes" in statements[1][0]
+    assert "UPSERT INTO decision_memory_heads" in statements[2][0]
+
+
+def test_supersession_loses_if_normal_write_already_replaced_current_head():
+    conn = FakeConnection(rows=[])
+    store = CockroachVectorMemoryStore(
+        connection_factory=lambda: conn,
+        embedder=lambda _: [1.0, 0.0],
+        semantic_embedder=lambda _: [0.75, 0.25],
+    )
+    episode = DecisionEpisode(
+        episode_id="00000000-0000-0000-0000-000000000003",
+        scope_id="scope-1",
+        situation="late correction after a concurrent normal write",
+        strategy=Strategy.REFRESH_PAYMENT_TOKEN,
+        outcome=Outcome.SUCCESS,
+        effectiveness=0.95,
+        confidence=1.0,
+        evidence={
+            "producer_agent_id": "agent-a",
+            "supersedes_episode_id": "00000000-0000-0000-0000-000000000001",
+        },
+        created_at=datetime.now(timezone.utc),
+    )
+
+    with pytest.raises(SupersessionWriteConflict, match="current governed head"):
+        store.save(episode)
+
+    assert len(conn.cursor_value.executions) == 1
+    assert "DELETE FROM decision_memory_heads" in conn.cursor_value.executions[0][0]
+    assert conn.committed is False

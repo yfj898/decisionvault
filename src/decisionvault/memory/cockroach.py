@@ -17,6 +17,10 @@ from decisionvault.memory.retry import retry_cockroach_serialization
 Vector = Sequence[float]
 
 
+class SupersessionWriteConflict(RuntimeError):
+    """A correction no longer targets the producer's current governed head."""
+
+
 def _vector_literal(vector: Vector) -> str:
     return "[" + ",".join(f"{float(value):.8f}" for value in vector) + "]"
 
@@ -110,19 +114,35 @@ class CockroachVectorMemoryStore:
             conn = self.connection_factory()
             try:
                 with conn.cursor() as cur:
-                    cur.execute(sql, params)
                     producer_agent_id = str(
                         episode.evidence.get("producer_agent_id", "")
                     ).strip()
-                    if semantic_vector is not None and producer_agent_id:
-                        if supersedes_episode_id:
-                            cur.execute(
-                                """
-                                DELETE FROM decision_memory_heads
-                                WHERE scope_id = %s AND episode_id = %s::UUID
-                                """,
-                                (episode.scope_id, supersedes_episode_id),
+                    if semantic_vector is not None and supersedes_episode_id:
+                        if not producer_agent_id:
+                            raise SupersessionWriteConflict(
+                                "supersession requires producer provenance"
                             )
+                        cur.execute(
+                            """
+                            DELETE FROM decision_memory_heads
+                            WHERE scope_id = %s
+                              AND producer_agent_id = %s
+                              AND episode_id = %s::UUID
+                            RETURNING episode_id::STRING
+                            """,
+                            (
+                                episode.scope_id,
+                                producer_agent_id,
+                                supersedes_episode_id,
+                            ),
+                        )
+                        deleted = cur.fetchone()
+                        if deleted is None:
+                            raise SupersessionWriteConflict(
+                                "supersession target is not the producer's current governed head"
+                            )
+                    cur.execute(sql, params)
+                    if semantic_vector is not None and producer_agent_id:
                         cur.execute(
                             """
                             UPSERT INTO decision_memory_heads (
@@ -186,6 +206,15 @@ class CockroachVectorMemoryStore:
                     semantic_embedding <=> %s::VECTOR AS cosine_distance
                 FROM decision_memory_heads
                 WHERE scope_id = %s
+                  AND COALESCE(upper(evidence->>'memory_status'), 'ACTIVE') <> 'REVOKED'
+                  AND (
+                    COALESCE(lower(evidence->>'pinned'), 'false') = 'true'
+                    OR created_at >= now() - INTERVAL '90 days'
+                  )
+                  AND (
+                    (outcome = 'SUCCESS' AND effectiveness >= 0.7)
+                    OR (outcome = 'FAILED' AND confidence >= 0.6)
+                  )
                 ORDER BY semantic_embedding <=> %s::VECTOR
                 LIMIT %s
             """

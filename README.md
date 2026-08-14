@@ -184,7 +184,7 @@ The live CockroachDB Cloud semantic smoke uses NVIDIA
 `nvidia/nv-embedqa-e5-v5` at its native 1024D width. A paraphrased future case
 produced cosine similarity `0.4541` and crossed the production semantic relevance
 gate of `0.40`. A separate hand-authored production semantic benchmark now covers
-12 benefit/control/governance cases and passes `12/12`. See
+14 benefit/control/governance cases and passes `14/14`. See
 `docs/evidence/SHARED_AGENT_MEMORY_SEMANTIC_RUNTIME.md` and
 `reports/production-semantic-benchmark.json`.
 
@@ -341,7 +341,7 @@ Local deterministic benchmark:        56 / 56 PASS
 CockroachDB Cloud deterministic:       28 / 28 PASS
 Cloud + NVIDIA advisor ablation:        7 /  7 PASS
 
-Native 1024D production semantic:      12 / 12 PASS
+Native 1024D production semantic:      14 / 14 PASS
 
 Benefit target accuracy, Memory ON:    100%
 Benefit target accuracy, Memory OFF:     0%
@@ -358,7 +358,7 @@ NVIDIA advisor strategy invariance:    100%
 The `56/56` and `28/28` suites are intentionally deterministic regression and
 causal-ablation tests; they are not presented as hosted semantic retrieval
 quality. The current judge-facing retrieval path is tested separately by the
-hand-authored `12/12` production semantic benchmark against
+hand-authored `14/14` production semantic benchmark against
 `decision_memory_heads.semantic_embedding VECTOR(1024)`, including same-scope
 distractors, cross-scope filtering, contradictory outcomes, stale memory,
 supersession, and duplicate-crowding controls. All Cloud benchmark rows are
@@ -434,7 +434,7 @@ repository. See `docs/evidence/PHASE4_MANAGED_MCP.md`.
 - [x] Responsive public judge UI
 - [x] Protected one-click Memory OFF vs Memory ON proof
 - [x] Systematic Memory ON vs OFF benchmark / ablation
-- [x] Hand-authored native-1024D production semantic benchmark (`12/12`)
+- [x] Hand-authored native-1024D production semantic benchmark (`14/14`)
 - [x] Public GitHub repository
 - [ ] <3 minute demo video
 

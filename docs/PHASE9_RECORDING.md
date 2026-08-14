@@ -105,7 +105,7 @@ Call out only the evidence already frozen in the repository:
 - failed-strategy repetition `0%`;
 - false influence `0%`;
 - cross-scope leakage `0%`;
-- production semantic benchmark `12/12`.
+- production semantic benchmark `14/14`.
 
 ### 2:28–2:40 — close
 

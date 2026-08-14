@@ -52,7 +52,7 @@ bounded explanation and AWS Lambda for the required AWS deployment.
 
 - [x] Deterministic local regression: 56/56.
 - [x] Deterministic CockroachDB Cloud regression: 28/28.
-- [x] Native-1024D hand-authored production semantic benchmark: 12/12.
+- [x] Native-1024D hand-authored production semantic benchmark: 14/14.
 - [x] Candidate-crowding adversarial regression.
 - [x] Conflict / stale / supersession / cross-scope controls.
 - [x] Hosted agent identity and scope-authorization tests.

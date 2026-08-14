@@ -140,7 +140,7 @@ The project contains both live evidence and systematic ablation:
 Local deterministic benchmark:          56 / 56 PASS
 CockroachDB Cloud deterministic:         28 / 28 PASS
 Cloud + NVIDIA advisor ablation:          7 /  7 PASS
-Native 1024D production semantic:        12 / 12 PASS
+Native 1024D production semantic:        14 / 14 PASS
 
 Benefit target accuracy, Memory ON:      100%
 Benefit target accuracy, Memory OFF:       0%
@@ -383,11 +383,11 @@ Benefit target accuracy: ON 100% / OFF 0%
 Failed-strategy repetition: ON 0% / OFF 100%
 False influence: 0%
 Cross-scope leakage: 0%
-Production semantic benchmark: 12/12
+Production semantic benchmark: 14/14
 ```
 
 Clarify that the `56/56` and `28/28` figures are deterministic regression/
-causal-ablation results, while `12/12` is the separate native-1024D production
+causal-ablation results, while `14/14` is the separate native-1024D production
 semantic suite.
 
 ### 2:28–2:40 — Close

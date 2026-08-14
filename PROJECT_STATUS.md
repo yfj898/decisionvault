@@ -15,7 +15,12 @@ Baseline:
 8 tests PASS
 
 Current local verification:
-77 tests PASS
+85 tests PASS
+Multi-agent follow-up hardening: PASS (pre-governance candidate filtering / atomic supersession / governed-only advisor evidence)
+6+ distinct-head adversarial governance regression: PASS
+Stale/revoked crowding regression: PASS
+Cloud supersession-vs-normal-write stale correction rejection: PASS
+Advisor governed-evidence-only regression: PASS
 Phase 9 single-page DVI / MCP / benchmark evidence UI: PASS
 Phase 9 1920×1080 real-click recording automation: READY
 Phase 9 hosted evidence panel deployment: PASS
@@ -87,7 +92,7 @@ Production semantic embedding `passage` / `query` separation: PASS
 Hosted semantic retrieval uses native `VECTOR(1024)`: PASS
 Legacy 1024D → 64D projection removed from hosted path: PASS
 Production semantic DVI `decision_memory_heads_scope_semantic_vec_idx`: PASS
-Production semantic hand-authored benchmark: 12/12 PASS
+Production semantic hand-authored benchmark: 14/14 PASS
 Production semantic benefit/control relevance gate calibrated to 0.40: PASS
 Semantic paraphrase Cloud recall similarity: 0.4541
 Semantic shared-memory strategy change: PASS

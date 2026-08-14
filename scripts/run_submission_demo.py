@@ -386,7 +386,7 @@ def main() -> int:
 
         _scroll_to(cdp, "submissionEvidence")
         evidence_pass = cdp.evaluate(
-            "document.getElementById('submissionEvidence').textContent.includes('12/12')"
+            "document.getElementById('submissionEvidence').textContent.includes('14/14')"
             " && document.getElementById('submissionEvidence').textContent.includes('VECTOR(1024)')"
             " && document.getElementById('submissionEvidence').textContent.includes('Managed MCP')"
         )

@@ -17,6 +17,7 @@ class SemanticSeed:
     scope: str = "query"
     age_days: float = 0.0
     supersedes_seed_index: int | None = None
+    memory_status: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -371,6 +372,109 @@ def production_semantic_cases() -> tuple[SemanticCase, ...]:
             expected_resolution="CONFLICT_ABSTAIN",
             expected_conflict=True,
         ),
+        SemanticCase(
+            case_id="distinct-head-conflict-crowding",
+            family="candidate_crowding_control",
+            query=(
+                "A replacement card still cannot complete checkout. Several agents reported "
+                "unrelated observations, while two independent payment agents disagree on "
+                "whether refreshing the merchant token is effective."
+            ),
+            seeds=tuple(
+                [
+                    SemanticSeed(
+                        producer_agent_id=f"noise-observer-{index}",
+                        situation=(
+                            "An unrelated operational observation was logged during the same "
+                            f"checkout incident; noise report {index}."
+                        ),
+                        strategy=Strategy.VERIFY_BILLING_PROFILE,
+                        outcome=Outcome.UNKNOWN,
+                        effectiveness=0.0,
+                    )
+                    for index in range(4)
+                ]
+                + [
+                    SemanticSeed(
+                        producer_agent_id="refresh-success-observer",
+                        situation=(
+                            "Refreshing the merchant payment token after a card reissue restored "
+                            "checkout successfully."
+                        ),
+                        strategy=Strategy.REFRESH_PAYMENT_TOKEN,
+                        outcome=Outcome.SUCCESS,
+                        effectiveness=0.95,
+                    ),
+                    SemanticSeed(
+                        producer_agent_id="refresh-failure-observer",
+                        situation=(
+                            "Refreshing the merchant payment token after a card reissue failed "
+                            "to restore checkout."
+                        ),
+                        strategy=Strategy.REFRESH_PAYMENT_TOKEN,
+                        outcome=Outcome.FAILED,
+                        effectiveness=0.1,
+                    ),
+                ]
+            ),
+            expected_strategy=Strategy.GENERIC_RETRY,
+            expected_influenced=False,
+            expected_resolution="CONFLICT_ABSTAIN",
+            expected_conflict=True,
+        ),
+        SemanticCase(
+            case_id="stale-revoked-crowding",
+            family="candidate_crowding_control",
+            query=(
+                "A reissued card keeps failing because the saved authorization may be stale; "
+                "use only current admissible recovery evidence."
+            ),
+            seeds=tuple(
+                [
+                    SemanticSeed(
+                        producer_agent_id=f"stale-observer-{index}",
+                        situation=(
+                            "Old payment evidence suggested checking billing details after a "
+                            f"decline; stale report {index}."
+                        ),
+                        strategy=Strategy.VERIFY_BILLING_PROFILE,
+                        outcome=Outcome.SUCCESS,
+                        effectiveness=0.95,
+                        age_days=120,
+                    )
+                    for index in range(3)
+                ]
+                + [
+                    SemanticSeed(
+                        producer_agent_id=f"revoked-observer-{index}",
+                        situation=(
+                            "A revoked payment-memory entry once recommended checking billing "
+                            f"details; revoked report {index}."
+                        ),
+                        strategy=Strategy.VERIFY_BILLING_PROFILE,
+                        outcome=Outcome.SUCCESS,
+                        effectiveness=0.95,
+                        memory_status="REVOKED",
+                    )
+                    for index in range(3)
+                ]
+                + [
+                    SemanticSeed(
+                        producer_agent_id="fresh-failure-observer",
+                        situation=(
+                            "Retrying the unchanged saved payment credential after card reissue "
+                            "failed again because the token remained stale."
+                        ),
+                        strategy=Strategy.GENERIC_RETRY,
+                        outcome=Outcome.FAILED,
+                        effectiveness=0.1,
+                    )
+                ]
+            ),
+            expected_strategy=Strategy.REFRESH_PAYMENT_TOKEN,
+            expected_influenced=True,
+            expected_producer="fresh-failure-observer",
+        ),
     )
 
 
@@ -386,6 +490,8 @@ def seed_episode(
     evidence = {"producer_agent_id": seed.producer_agent_id}
     if supersedes_episode_id:
         evidence["supersedes_episode_id"] = supersedes_episode_id
+    if seed.memory_status:
+        evidence["memory_status"] = seed.memory_status
     return DecisionEpisode(
         episode_id=episode_id,
         scope_id=scope_id,

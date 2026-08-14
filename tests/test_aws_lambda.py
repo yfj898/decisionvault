@@ -5,6 +5,7 @@ import json
 import decisionvault.aws_lambda as aws_lambda
 from decisionvault.agent.auth import token_digest
 from decisionvault.domain import Decision, Strategy
+from decisionvault.memory.cockroach import SupersessionWriteConflict
 
 
 def _configure_agent(monkeypatch, *, token="agent-token", permission="decide"):
@@ -70,6 +71,43 @@ def test_rate_limit_response_is_429_with_retry_after(monkeypatch):
     assert body == {"error": "rate_limited", "retry_after_seconds": 17}
 
 
+def test_atomic_supersession_write_conflict_maps_to_http_409(monkeypatch):
+    monkeypatch.setattr(aws_lambda, "hydrate_runtime_secrets", lambda: None)
+    monkeypatch.setattr(aws_lambda, "_enforce_rate_limit", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        aws_lambda,
+        "_agent_grants",
+        lambda: {
+            token_digest("agent-token"): aws_lambda.AgentGrant(
+                agent_id="recovery-observer",
+                scope_prefixes=("demo",),
+                permissions=frozenset({"record"}),
+                trust=0.8,
+            )
+        },
+    )
+    monkeypatch.setattr(
+        aws_lambda,
+        "_record",
+        lambda body, *, agent_id: (_ for _ in ()).throw(
+            SupersessionWriteConflict("target changed concurrently")
+        ),
+    )
+
+    response = aws_lambda.lambda_handler(
+        {
+            "requestContext": {"http": {"method": "POST"}},
+            "rawPath": "/record",
+            "headers": {"X-DecisionVault-Agent-Token": "agent-token"},
+            "body": json.dumps({"scope_id": "demo"}),
+        },
+        None,
+    )
+
+    assert response["statusCode"] == 409
+    assert json.loads(response["body"])["error"] == "conflict"
+
+
 class StubAgent:
     def decide(self, *, scope_id: str, situation: str) -> Decision:
         assert scope_id == "demo"
@@ -120,7 +158,7 @@ def test_root_serves_judge_ui_without_embedding_demo_token(monkeypatch):
     assert "Reproducible submission evidence" in response["body"]
     assert "semantic_embedding VECTOR(1024)" in response["body"]
     assert "decision_memory_heads_scope_semantic_vec_idx" in response["body"]
-    assert "12/12" in response["body"]
+    assert "14/14" in response["body"]
     assert "do-not-embed-this" not in response["body"]
 
 

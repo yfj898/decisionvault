@@ -244,3 +244,87 @@ def test_unknown_producer_does_not_receive_maximum_trust_when_registry_enabled()
 
     assert result.selected_strategy == Strategy.REFRESH_PAYMENT_TOKEN
     assert result.memory_influenced is True
+
+
+def test_six_plus_distinct_heads_keep_lower_ranked_conflict_visible():
+    distractors = [
+        _memory(
+            f"distractor-{index}",
+            producer=f"distractor-agent-{index}",
+            strategy=Strategy.VERIFY_BILLING_PROFILE,
+            outcome=Outcome.UNKNOWN,
+            effectiveness=0.0,
+            similarity=0.99 - index * 0.01,
+        )
+        for index in range(4)
+    ]
+    success = _memory(
+        "refresh-success",
+        producer="success-agent",
+        strategy=Strategy.REFRESH_PAYMENT_TOKEN,
+        outcome=Outcome.SUCCESS,
+        effectiveness=0.95,
+        similarity=0.90,
+    )
+    failure = _memory(
+        "refresh-failure",
+        producer="failure-agent",
+        strategy=Strategy.REFRESH_PAYMENT_TOKEN,
+        outcome=Outcome.FAILED,
+        effectiveness=0.1,
+        similarity=0.89,
+    )
+
+    result = ConflictAwareMemoryResolver().resolve(
+        [*distractors, success, failure],
+        now=NOW,
+    )
+
+    assert result.selected_strategy is None
+    assert result.memory_influenced is False
+    assert result.conflict is True
+    assert result.resolution == "CONFLICT_ABSTAIN"
+
+
+def test_stale_and_revoked_candidates_do_not_hide_fresh_signal():
+    stale = [
+        _memory(
+            f"stale-{index}",
+            producer=f"stale-agent-{index}",
+            strategy=Strategy.VERIFY_BILLING_PROFILE,
+            outcome=Outcome.SUCCESS,
+            effectiveness=0.95,
+            similarity=0.99 - index * 0.01,
+            age_days=120,
+        )
+        for index in range(3)
+    ]
+    revoked = [
+        _memory(
+            f"revoked-{index}",
+            producer=f"revoked-agent-{index}",
+            strategy=Strategy.VERIFY_BILLING_PROFILE,
+            outcome=Outcome.SUCCESS,
+            effectiveness=0.95,
+            similarity=0.95 - index * 0.01,
+            extra={"memory_status": "REVOKED"},
+        )
+        for index in range(3)
+    ]
+    fresh_failure = _memory(
+        "fresh-failure",
+        producer="fresh-agent",
+        strategy=Strategy.GENERIC_RETRY,
+        outcome=Outcome.FAILED,
+        effectiveness=0.1,
+        similarity=0.88,
+    )
+
+    result = ConflictAwareMemoryResolver(max_age_days=90).resolve(
+        [*stale, *revoked, fresh_failure],
+        now=NOW,
+    )
+
+    assert result.selected_strategy == Strategy.REFRESH_PAYMENT_TOKEN
+    assert result.memory_influenced is True
+    assert result.episode_ids == ("fresh-failure",)

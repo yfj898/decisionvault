@@ -17,25 +17,45 @@ def main() -> int:
         type=Path,
         default=ROOT / "dist" / "decisionvault-lambda.zip",
     )
+    parser.add_argument(
+        "--vendor-source",
+        type=Path,
+        help=(
+            "Reuse an existing Lambda vendor directory instead of downloading "
+            "requirements again. The current DecisionVault source is always "
+            "re-copied after the vendor tree."
+        ),
+    )
     args = parser.parse_args()
 
     build_dir = ROOT / ".venv" / "lambda-package"
     if build_dir.exists():
         shutil.rmtree(build_dir)
-    build_dir.mkdir(parents=True)
-
-    subprocess.run(
-        [
-            "uv",
-            "pip",
-            "install",
-            "--target",
-            str(build_dir),
-            "-r",
-            str(ROOT / "requirements-lambda.txt"),
-        ],
-        check=True,
-    )
+    if args.vendor_source:
+        vendor_source = args.vendor_source.resolve()
+        if not vendor_source.is_dir():
+            raise SystemExit(f"vendor source does not exist: {vendor_source}")
+        shutil.copytree(vendor_source, build_dir)
+        packaged_source = build_dir / "decisionvault"
+        if packaged_source.exists():
+            shutil.rmtree(packaged_source)
+        packaged_handler = build_dir / "lambda_function.py"
+        if packaged_handler.exists():
+            packaged_handler.unlink()
+    else:
+        build_dir.mkdir(parents=True)
+        subprocess.run(
+            [
+                "uv",
+                "pip",
+                "install",
+                "--target",
+                str(build_dir),
+                "-r",
+                str(ROOT / "requirements-lambda.txt"),
+            ],
+            check=True,
+        )
     shutil.copytree(ROOT / "src" / "decisionvault", build_dir / "decisionvault")
     cloud_ca = ROOT / ".venv" / "cockroach-cloud-root.crt"
     if cloud_ca.exists():

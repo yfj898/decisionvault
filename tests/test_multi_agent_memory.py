@@ -5,6 +5,16 @@ from decisionvault.domain import Outcome, Strategy
 from decisionvault.memory.inmemory import InMemoryEpisodeStore
 
 
+class RecordingStore(InMemoryEpisodeStore):
+    def __init__(self):
+        super().__init__()
+        self.last_limit = None
+
+    def recall(self, *, scope_id: str, situation: str, limit: int = 5):
+        self.last_limit = limit
+        return super().recall(scope_id=scope_id, situation=situation, limit=limit)
+
+
 def test_cross_agent_outcome_memory_preserves_provenance_and_scope():
     store = InMemoryEpisodeStore()
     producer = DecisionAgent(memory=store, agent_id="recovery-observer")
@@ -37,3 +47,13 @@ def test_cross_agent_outcome_memory_preserves_provenance_and_scope():
     assert isolated.strategy == Strategy.GENERIC_RETRY
     assert isolated.memory_influenced is False
     assert isolated.recalled_producer_agent_ids == ()
+
+
+def test_agent_overfetches_governance_candidates_beyond_legacy_top5():
+    store = RecordingStore()
+    consumer = DecisionAgent(memory=store, agent_id="planner")
+
+    consumer.decide(scope_id="shared-team", situation="payment token stale")
+
+    assert store.last_limit is not None
+    assert store.last_limit >= 32

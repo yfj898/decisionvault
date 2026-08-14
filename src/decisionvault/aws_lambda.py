@@ -19,7 +19,10 @@ from decisionvault.execution import (
     issue_sandbox_receipt,
     verify_execution_receipt,
 )
-from decisionvault.memory.cockroach import CockroachVectorMemoryStore
+from decisionvault.memory.cockroach import (
+    CockroachVectorMemoryStore,
+    SupersessionWriteConflict,
+)
 from decisionvault.memory.connection import psycopg_connection_factory
 from decisionvault.memory.embedding import (
     NvidiaSemanticEmbedder,
@@ -758,7 +761,7 @@ def _handle_request(event: dict[str, Any], _context: Any) -> dict[str, Any]:
             },
             headers={"retry-after": str(exc.retry_after_seconds)},
         )
-    except SupersessionConflict as exc:
+    except (SupersessionConflict, SupersessionWriteConflict) as exc:
         return _json_response(409, {"error": "conflict", "detail": str(exc)})
     except (ValueError, TypeError, json.JSONDecodeError) as exc:
         return _json_response(400, {"error": "bad_request", "detail": str(exc)})

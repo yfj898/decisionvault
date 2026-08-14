@@ -86,6 +86,13 @@ key is:
 Immutable history is still written to `decision_episodes`, but only the current
 head for a producer/strategy participates in ANN candidate generation.
 
+Follow-up adversarial review found that a fixed top-5 over governed heads could
+still hide a sixth independent contradiction when unrelated, stale, revoked, or
+otherwise inadmissible heads ranked above it. Production semantic recall now
+pre-filters lifecycle/signal-inadmissible heads in SQL and the agent requests a
+32-candidate governance pool instead of the old fixed 5. The resolver remains
+the authority for similarity, trust, aggregation, and conflict abstention.
+
 Live CockroachDB Cloud adversarial verification:
 
 ```text
@@ -230,10 +237,10 @@ irrelevant distractor         = 0.3575
 Final result:
 
 ```text
-native 1024D production semantic benchmark = 12 / 12 PASS
+native 1024D production semantic benchmark = 14 / 14 PASS
 local deterministic regression             = 56 / 56 PASS
 CockroachDB deterministic regression        = 28 / 28 PASS
-repository unit/contract suite              = 51 / 51 PASS
+repository unit/contract suite              = 85 / 85 PASS
 ```
 
 The semantic suite is a controlled retrieval/governance conformance benchmark,
