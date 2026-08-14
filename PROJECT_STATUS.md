@@ -15,7 +15,7 @@ Baseline:
 8 tests PASS
 
 Current local verification:
-51 tests PASS
+58 tests PASS
 CockroachDB Cloud persistence smoke: PASS
 Fresh-process recall changed agent behavior: PASS
 Memory-off causal baseline: PASS
@@ -122,3 +122,11 @@ Hosted governance temporary rows cleanup: 0 rows
 Hosted governance desktop Chrome DOM smoke: PASS
 Hosted governance mobile Chrome DOM smoke: PASS
 Final red-team P0 remediation evidence: PASS
+Verified execution receipt unit contract: PASS
+Execution receipt Cloud migration / unique index: PASS
+Hosted `/execute` signed sandbox receipt: PASS
+Hosted `/record` rejects caller-controlled outcome fields: PASS
+Hosted receipt replay returns same episode: PASS
+Hosted tampered receipt rejection: HTTP 400
+Hosted verified failure still changes planner strategy: PASS
+Verified receipt temporary rows cleanup: 0 rows

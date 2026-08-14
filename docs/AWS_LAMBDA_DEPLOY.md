@@ -27,6 +27,8 @@ Required Lambda environment variables:
 - `DEMO_API_TOKEN` — random deployment-only token for the atomic judge demos
 - `AGENT_AUTH_JSON` — JSON object keyed by SHA-256 digests of opaque agent
   tokens; grants bind `agent_id`, scope prefixes, permissions, and trust
+- `EXECUTION_RECEIPT_SECRET` — deployment-only HMAC key used to sign and verify
+  payment-recovery sandbox execution receipts
 
 Do not put any credential in source control. Lambda environment variables are
 configured at deployment time.
@@ -35,6 +37,8 @@ configured at deployment time.
 
 - `GET /` — public judge UI
 - `GET /health`
+- `POST /execute` — agent-token authenticated sandbox execution; returns a signed
+  receipt
 - `POST /record` — agent-token authenticated outcome recording
 - `POST /decide` — agent-token authenticated scoped recall/decision
 - `POST /demo` — protected atomic Memory OFF vs Memory ON proof with cleanup
@@ -43,9 +47,13 @@ configured at deployment time.
 The `/decide` response exposes `memory_influenced`, recalled episode IDs, the
 committed strategy, and (when available) the bounded model explanation.
 
-The caller does not supply `agent_id` to `/record` or `/decide`; identity comes
+The caller does not supply `agent_id` to `/execute`, `/record`, or `/decide`; identity comes
 from the authenticated grant. Requests outside the token's allowed scope prefix
 or permission are rejected.
+
+`/record` does not accept direct `outcome` / `effectiveness` / `confidence`
+fields. It requires the signed receipt returned by `/execute`; the receipt ID is
+stored under a unique CockroachDB index to make replay idempotent.
 
 ## Build
 

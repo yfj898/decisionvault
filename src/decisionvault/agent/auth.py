@@ -54,8 +54,10 @@ def load_agent_grants(raw: str) -> dict[str, AgentGrant]:
             for item in value.get("permissions", [])
             if str(item).strip()
         )
-        if not permissions or not permissions <= {"decide", "record"}:
-            raise ValueError("permissions must contain decide and/or record")
+        if not permissions or not permissions <= {"decide", "execute", "record"}:
+            raise ValueError(
+                "permissions must contain decide, execute, and/or record"
+            )
         trust = float(value.get("trust", 0.25))
         if not 0.0 <= trust <= 1.0:
             raise ValueError("agent trust must be between 0 and 1")

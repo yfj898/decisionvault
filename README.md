@@ -259,13 +259,23 @@ identity, allowed scope prefixes, permissions, and trust.
 The live deployment proved the full hosted causal path:
 
 ```text
-AWS Lambda /record
+AWS Lambda /execute
+→ server-signed payment-recovery sandbox receipt
+→ AWS Lambda /record
 → CockroachDB Cloud persistent episode
 → AWS Lambda /decide
 → CockroachDB vector recall
 → deterministic strategy change
 → NVIDIA bounded explanation
 ```
+
+General agents cannot submit arbitrary outcome labels to `/record`. `/execute`
+derives the outcome from the server-controlled hackathon scenario and signs a
+receipt that binds agent identity, scope, situation, strategy, result, and issue
+time. `/record` verifies that receipt and persists its unique `receipt_id` as an
+idempotency key. Replaying the same receipt returns the original episode rather
+than duplicating memory. This is a controlled payment-recovery sandbox, not a
+claim of a real payment-processor integration.
 
 The live Memory ON call returned `REFRESH_PAYMENT_TOKEN` with
 `memory_influenced=true`; the Memory OFF control returned `GENERIC_RETRY` with
@@ -401,6 +411,8 @@ repository. See `docs/evidence/PHASE4_MANAGED_MCP.md`.
 - [x] Native `VECTOR(1024)` production semantic DVI; no hosted 1024→64 projection
 - [x] Cross-agent outcome-memory provenance and scope isolation
 - [x] Per-agent token → identity / scope / permission binding for `/record` and `/decide`
+- [x] Server-signed `/execute` receipts required by the general `/record` API
+- [x] Unique execution receipt idempotency boundary
 - [x] Conflict-aware multi-agent memory governance
 - [x] Staleness / supersession / candidate-crowding controls
 - [x] Server-side producer trust weighting with conflict visibility

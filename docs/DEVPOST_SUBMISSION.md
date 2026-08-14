@@ -46,6 +46,13 @@ episodes through CockroachDB vector search. A deterministic outcome-aware policy
 then decides whether to reuse a successful strategy, avoid a failed strategy, or
 ignore weak/irrelevant memory.
 
+For the hosted general API, outcome memory is no longer accepted as a caller
+assertion. An authenticated agent first invokes a server-controlled
+payment-recovery sandbox through `/execute`; DecisionVault signs the resulting
+execution receipt and `/record` verifies that receipt before the outcome can
+enter persistent memory. Receipt IDs are unique/idempotent. This is a controlled
+hackathon executor, not a claim of integration with a real card network.
+
 The live proof uses two agent identities:
 
 ```text
@@ -202,6 +209,8 @@ reproducibly.
 - Native 1024D CockroachDB semantic DVI with no lossy hosted projection.
 - Server-bound per-agent identity / scope / permission grants for general APIs.
 - Candidate-crowding-resistant governed memory heads.
+- Server-signed execution receipts and receipt-id idempotency for hosted outcome
+  recording.
 - Real AWS Lambda judge-facing application.
 - One-click Memory OFF vs Memory ON causal proof.
 - Systematic benchmark showing benefit, false-influence, isolation, and model-
@@ -226,8 +235,9 @@ ANN candidate generation has already hidden.
 ## What's next
 
 - Extend the strategy/action contract beyond the frozen payment-recovery domain.
-- Bind stored outcomes to execution receipts / external outcome verification
-  rather than accepting outcome labels from an upstream application contract.
+- Replace the current deterministic payment-recovery sandbox with a real external
+  execution gateway / outcome verifier while preserving the signed receipt
+  contract.
 - Add learned or calibrated relevance thresholds while preserving the current
   deterministic safety gate.
 - Add richer operational metrics around recall quality and memory drift.

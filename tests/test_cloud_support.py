@@ -110,7 +110,8 @@ def test_cockroach_store_save_binds_vector_and_commits():
     assert "INSERT INTO decision_episodes" in sql
     assert params[0] == episode.episode_id
     assert params[1] == "scope-1"
-    assert params[8] == "[1.00000000,0.00000000]"
+    assert params[8] is None
+    assert params[9] == "[1.00000000,0.00000000]"
     assert conn.committed is True
     assert conn.closed is True
 

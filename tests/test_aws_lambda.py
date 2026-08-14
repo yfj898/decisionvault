@@ -24,6 +24,26 @@ def _configure_agent(monkeypatch, *, token="agent-token", permission="decide"):
     return token
 
 
+def _configure_executor(monkeypatch, *, token="executor-token"):
+    monkeypatch.setenv(
+        "AGENT_AUTH_JSON",
+        json.dumps(
+            {
+                token_digest(token): {
+                    "agent_id": "recovery-observer-api",
+                    "scope_prefixes": ["demo"],
+                    "permissions": ["execute", "record"],
+                    "trust": 0.8,
+                }
+            }
+        ),
+    )
+    monkeypatch.setenv(
+        "EXECUTION_RECEIPT_SECRET", "test-execution-receipt-secret-123"
+    )
+    return token
+
+
 class StubAgent:
     def decide(self, *, scope_id: str, situation: str) -> Decision:
         assert scope_id == "demo"
@@ -188,3 +208,100 @@ def test_caller_cannot_self_assert_agent_id(monkeypatch):
     )
     assert response["statusCode"] == 400
     assert json.loads(response["body"])["error"] == "agent_id_is_server_bound"
+
+
+def test_execute_route_issues_server_signed_receipt(monkeypatch):
+    token = _configure_executor(monkeypatch)
+    response = aws_lambda.lambda_handler(
+        {
+            "requestContext": {"http": {"method": "POST"}},
+            "rawPath": "/execute",
+            "headers": {"X-DecisionVault-Agent-Token": token},
+            "body": json.dumps(
+                {
+                    "scope_id": "demo",
+                    "situation": "replacement card still uses stale merchant token",
+                    "strategy": "GENERIC_RETRY",
+                    "scenario": "stale_payment_token",
+                }
+            ),
+        },
+        None,
+    )
+    body = json.loads(response["body"])
+    receipt = body["execution_receipt"]
+    assert response["statusCode"] == 200
+    assert receipt["agent_id"] == "recovery-observer-api"
+    assert receipt["outcome"] == "FAILED"
+    assert receipt["effectiveness"] == 0.1
+    assert receipt["signature"]
+
+
+def test_record_rejects_direct_outcome_fields(monkeypatch):
+    token = _configure_executor(monkeypatch)
+    response = aws_lambda.lambda_handler(
+        {
+            "requestContext": {"http": {"method": "POST"}},
+            "rawPath": "/record",
+            "headers": {"X-DecisionVault-Agent-Token": token},
+            "body": json.dumps(
+                {
+                    "scope_id": "demo",
+                    "outcome": "SUCCESS",
+                    "effectiveness": 1.0,
+                }
+            ),
+        },
+        None,
+    )
+    assert response["statusCode"] == 400
+    assert "execution_receipt" in json.loads(response["body"])["detail"]
+
+
+def test_record_returns_existing_episode_for_receipt_replay(monkeypatch):
+    token = _configure_executor(monkeypatch)
+    execute = aws_lambda.lambda_handler(
+        {
+            "requestContext": {"http": {"method": "POST"}},
+            "rawPath": "/execute",
+            "headers": {"X-DecisionVault-Agent-Token": token},
+            "body": json.dumps(
+                {
+                    "scope_id": "demo",
+                    "situation": "stale token",
+                    "strategy": "GENERIC_RETRY",
+                    "scenario": "stale_payment_token",
+                }
+            ),
+        },
+        None,
+    )
+    receipt = json.loads(execute["body"])["execution_receipt"]
+    monkeypatch.setattr(
+        aws_lambda,
+        "_episode_by_receipt",
+        lambda receipt_id: {
+            "episode_id": "episode-existing",
+            "strategy": "GENERIC_RETRY",
+            "outcome": "FAILED",
+            "effectiveness": 0.1,
+            "producer_agent_id": "recovery-observer-api",
+            "execution_receipt_id": receipt_id,
+            "idempotent_replay": True,
+        },
+    )
+    response = aws_lambda.lambda_handler(
+        {
+            "requestContext": {"http": {"method": "POST"}},
+            "rawPath": "/record",
+            "headers": {"X-DecisionVault-Agent-Token": token},
+            "body": json.dumps(
+                {"scope_id": "demo", "execution_receipt": receipt}
+            ),
+        },
+        None,
+    )
+    body = json.loads(response["body"])
+    assert response["statusCode"] == 201
+    assert body["episode_id"] == "episode-existing"
+    assert body["idempotent_replay"] is True

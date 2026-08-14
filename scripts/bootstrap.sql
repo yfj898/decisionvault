@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS decision_episodes (
     effectiveness FLOAT8 NOT NULL CHECK (effectiveness >= 0 AND effectiveness <= 1),
     confidence FLOAT8 NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
     evidence JSONB NOT NULL DEFAULT '{}'::JSONB,
+    execution_receipt_id STRING,
     embedding VECTOR(64) NOT NULL,
     semantic_embedding VECTOR(1024),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -14,6 +15,10 @@ CREATE TABLE IF NOT EXISTS decision_episodes (
 
 CREATE INDEX IF NOT EXISTS decision_episodes_scope_created_idx
 ON decision_episodes (scope_id, created_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS decision_episodes_execution_receipt_uidx
+ON decision_episodes (execution_receipt_id)
+WHERE execution_receipt_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS decision_memory_heads (
     scope_id STRING NOT NULL,
@@ -25,6 +30,7 @@ CREATE TABLE IF NOT EXISTS decision_memory_heads (
     effectiveness FLOAT8 NOT NULL CHECK (effectiveness >= 0 AND effectiveness <= 1),
     confidence FLOAT8 NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
     evidence JSONB NOT NULL DEFAULT '{}'::JSONB,
+    execution_receipt_id STRING,
     semantic_embedding VECTOR(1024) NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (scope_id, producer_agent_id, strategy)

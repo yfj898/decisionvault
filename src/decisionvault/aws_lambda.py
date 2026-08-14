@@ -14,6 +14,10 @@ from decisionvault.agent.memory_governance import (
 )
 from decisionvault.agent.policy import OutcomeAwarePolicy
 from decisionvault.domain import Decision, Outcome, Strategy
+from decisionvault.execution import (
+    issue_sandbox_receipt,
+    verify_execution_receipt,
+)
 from decisionvault.memory.cockroach import CockroachVectorMemoryStore
 from decisionvault.memory.connection import psycopg_connection_factory
 from decisionvault.memory.embedding import (
@@ -136,6 +140,13 @@ def _producer_trust_registry() -> dict[str, float]:
     return registry
 
 
+def _execution_secret() -> str:
+    secret = os.getenv("EXECUTION_RECEIPT_SECRET", "").strip()
+    if len(secret) < 16:
+        raise RuntimeError("EXECUTION_RECEIPT_SECRET is not configured")
+    return secret
+
+
 def _build_agent(
     *,
     memory_enabled: bool,
@@ -215,6 +226,9 @@ def _health() -> dict[str, Any]:
         "nvidia_advisor_configured": bool(os.getenv("NVIDIA_API_KEY")),
         "semantic_embedding_configured": bool(os.getenv("NVIDIA_API_KEY")),
         "database_configured": bool(os.getenv("DATABASE_URL")),
+        "execution_receipt_signing_configured": bool(
+            os.getenv("EXECUTION_RECEIPT_SECRET", "").strip()
+        ),
     }
 
 
@@ -230,6 +244,57 @@ def _decide(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
         situation=situation,
     )
     return _decision_payload(decision)
+
+
+def _execute(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
+    scope_id = str(body.get("scope_id", "")).strip()
+    situation = str(body.get("situation", "")).strip()
+    scenario = str(body.get("scenario", "")).strip()
+    if not scope_id or not situation or not scenario:
+        raise ValueError("scope_id, situation, and scenario are required")
+    strategy = Strategy(str(body.get("strategy", "")))
+    receipt = issue_sandbox_receipt(
+        scope_id=scope_id,
+        agent_id=agent_id,
+        situation=situation,
+        strategy=strategy,
+        scenario=scenario,
+        signing_secret=_execution_secret(),
+    )
+    return {
+        "execution_receipt": receipt,
+        "verified_outcome_source": "decisionvault-payment-recovery-sandbox",
+    }
+
+
+def _episode_by_receipt(receipt_id: str) -> dict[str, Any] | None:
+    conn = psycopg_connection_factory()()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT episode_id::STRING, strategy, outcome, effectiveness,
+                       evidence->>'producer_agent_id'
+                FROM decision_episodes
+                WHERE execution_receipt_id = %s
+                LIMIT 1
+                """,
+                (receipt_id,),
+            )
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    return {
+        "episode_id": row[0],
+        "strategy": row[1],
+        "outcome": row[2],
+        "effectiveness": float(row[3]),
+        "producer_agent_id": row[4],
+        "execution_receipt_id": receipt_id,
+        "idempotent_replay": True,
+    }
 
 
 def _decision_payload(decision: Decision) -> dict[str, Any]:
@@ -352,37 +417,65 @@ def _governance_demo() -> dict[str, Any]:
 
 def _record(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
     scope_id = str(body.get("scope_id", "")).strip()
-    situation = str(body.get("situation", "")).strip()
-    if not scope_id or not situation:
-        raise ValueError("scope_id and situation are required")
+    if not scope_id:
+        raise ValueError("scope_id is required")
+    forbidden = {
+        key
+        for key in ("agent_id", "situation", "strategy", "outcome", "effectiveness", "confidence")
+        if key in body
+    }
+    if forbidden:
+        raise ValueError(
+            "direct outcome fields are not accepted; use execution_receipt"
+        )
+    receipt = verify_execution_receipt(
+        body.get("execution_receipt"),
+        signing_secret=_execution_secret(),
+        expected_scope_id=scope_id,
+        expected_agent_id=agent_id,
+    )
+    existing = _episode_by_receipt(receipt.receipt_id)
+    if existing is not None:
+        return existing
 
-    strategy = Strategy(str(body.get("strategy", "")))
-    outcome = Outcome(str(body.get("outcome", "")))
-    effectiveness = float(body.get("effectiveness"))
-    confidence = float(body.get("confidence", 1.0))
-    evidence: dict[str, str] = {}
+    evidence: dict[str, str] = {
+        "execution_receipt_id": receipt.receipt_id,
+        "execution_scenario": receipt.scenario,
+        "execution_verified": "true",
+        "execution_outcome_source": "decisionvault-payment-recovery-sandbox",
+    }
     supersedes_episode_id = str(body.get("supersedes_episode_id", "")).strip()
     if supersedes_episode_id:
         evidence["supersedes_episode_id"] = supersedes_episode_id
     decision = Decision(
-        strategy=strategy,
-        reason=str(body.get("decision_reason", "recorded via Lambda API")),
+        strategy=receipt.strategy,
+        reason=f"verified execution receipt {receipt.receipt_id}",
     )
-    episode = _build_agent(memory_enabled=True, agent_id=agent_id).record_outcome(
-        scope_id=scope_id,
-        situation=situation,
-        decision=decision,
-        outcome=outcome,
-        effectiveness=effectiveness,
-        confidence=confidence,
-        evidence=evidence,
-    )
+    try:
+        episode = _build_agent(memory_enabled=True, agent_id=agent_id).record_outcome(
+            scope_id=scope_id,
+            situation=receipt.situation,
+            decision=decision,
+            outcome=receipt.outcome,
+            effectiveness=receipt.effectiveness,
+            confidence=receipt.confidence,
+            evidence=evidence,
+        )
+    except Exception:
+        # The unique execution_receipt_id index is the final race-safe idempotency
+        # boundary. If a concurrent writer won, return the already-recorded row.
+        existing = _episode_by_receipt(receipt.receipt_id)
+        if existing is not None:
+            return existing
+        raise
     return {
         "episode_id": episode.episode_id,
         "strategy": episode.strategy.value,
         "outcome": episode.outcome.value,
         "effectiveness": episode.effectiveness,
         "producer_agent_id": episode.evidence.get("producer_agent_id"),
+        "execution_receipt_id": receipt.receipt_id,
+        "idempotent_replay": False,
     }
 
 
@@ -415,6 +508,20 @@ def lambda_handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
             if "agent_id" in body:
                 return _json_response(400, {"error": "agent_id_is_server_bound"})
             return _json_response(200, _decide(body, agent_id=grant.agent_id))
+        if method == "POST" and path == "/execute":
+            scope_id = str(body.get("scope_id", "")).strip()
+            if not scope_id:
+                return _json_response(
+                    400, {"error": "bad_request", "detail": "scope_id is required"}
+                )
+            grant = _authenticate_request_agent(
+                event, permission="execute", scope_id=scope_id
+            )
+            if grant is None:
+                return _json_response(403, {"error": "forbidden"})
+            if "agent_id" in body:
+                return _json_response(400, {"error": "agent_id_is_server_bound"})
+            return _json_response(200, _execute(body, agent_id=grant.agent_id))
         if method == "POST" and path == "/record":
             scope_id = str(body.get("scope_id", "")).strip()
             if not scope_id:

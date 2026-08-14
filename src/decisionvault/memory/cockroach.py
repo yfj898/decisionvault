@@ -39,6 +39,9 @@ class CockroachVectorMemoryStore:
 
     def save(self, episode: DecisionEpisode) -> None:
         vector = _vector_literal(self.embedder(episode.situation))
+        execution_receipt_id = str(
+            episode.evidence.get("execution_receipt_id", "")
+        ).strip() or None
         semantic_vector = (
             _vector_literal(self.semantic_embedder(episode.situation))
             if self.semantic_embedder is not None
@@ -48,11 +51,12 @@ class CockroachVectorMemoryStore:
             sql = """
                 INSERT INTO decision_episodes (
                     episode_id, scope_id, situation, strategy, outcome,
-                    effectiveness, confidence, evidence, embedding, created_at
+                    effectiveness, confidence, evidence, execution_receipt_id,
+                    embedding, created_at
                 )
                 VALUES (
                     %s::UUID, %s, %s, %s, %s,
-                    %s, %s, %s::JSONB, %s::VECTOR, %s
+                    %s, %s, %s::JSONB, %s, %s::VECTOR, %s
                 )
             """
             params = (
@@ -64,6 +68,7 @@ class CockroachVectorMemoryStore:
                 episode.effectiveness,
                 episode.confidence,
                 json.dumps(dict(episode.evidence)),
+                execution_receipt_id,
                 vector,
                 episode.created_at,
             )
@@ -71,12 +76,12 @@ class CockroachVectorMemoryStore:
             sql = """
                 INSERT INTO decision_episodes (
                     episode_id, scope_id, situation, strategy, outcome,
-                    effectiveness, confidence, evidence, embedding,
+                    effectiveness, confidence, evidence, execution_receipt_id, embedding,
                     semantic_embedding, created_at
                 )
                 VALUES (
                     %s::UUID, %s, %s, %s, %s,
-                    %s, %s, %s::JSONB, %s::VECTOR,
+                    %s, %s, %s::JSONB, %s, %s::VECTOR,
                     %s::VECTOR, %s
                 )
             """
@@ -89,6 +94,7 @@ class CockroachVectorMemoryStore:
                 episode.effectiveness,
                 episode.confidence,
                 json.dumps(dict(episode.evidence)),
+                execution_receipt_id,
                 vector,
                 semantic_vector,
                 episode.created_at,
@@ -117,11 +123,11 @@ class CockroachVectorMemoryStore:
                         UPSERT INTO decision_memory_heads (
                             scope_id, producer_agent_id, strategy, episode_id,
                             situation, outcome, effectiveness, confidence,
-                            evidence, semantic_embedding, created_at
+                            evidence, execution_receipt_id, semantic_embedding, created_at
                         ) VALUES (
                             %s, %s, %s, %s::UUID,
                             %s, %s, %s, %s,
-                            %s::JSONB, %s::VECTOR, %s
+                            %s::JSONB, %s, %s::VECTOR, %s
                         )
                         """,
                         (
@@ -134,6 +140,7 @@ class CockroachVectorMemoryStore:
                             episode.effectiveness,
                             episode.confidence,
                             json.dumps(dict(episode.evidence)),
+                            execution_receipt_id,
                             semantic_vector,
                             episode.created_at,
                         ),
