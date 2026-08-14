@@ -1,71 +1,41 @@
 from __future__ import annotations
 
-from decisionvault.domain import Decision, Outcome, RecalledEpisode, Strategy
+from dataclasses import dataclass, field
+
+from decisionvault.agent.memory_governance import ConflictAwareMemoryResolver
+from decisionvault.domain import Decision, RecalledEpisode, Strategy
 
 
+@dataclass(slots=True)
 class OutcomeAwarePolicy:
     """Small deterministic policy that makes the memory effect auditable."""
+
+    resolver: ConflictAwareMemoryResolver = field(
+        default_factory=ConflictAwareMemoryResolver
+    )
 
     def decide(
         self,
         *,
         recalled: list[RecalledEpisode],
     ) -> Decision:
-        relevant = [item for item in recalled if item.similarity >= 0.30]
-
-        successful = [
-            item
-            for item in relevant
-            if item.episode.outcome == Outcome.SUCCESS
-            and item.episode.effectiveness >= 0.7
-        ]
-        if successful:
-            best = max(
-                successful,
-                key=lambda item: (
-                    item.similarity,
-                    item.episode.effectiveness,
-                    item.episode.confidence,
-                ),
-            )
+        resolution = self.resolver.resolve(recalled)
+        if resolution.memory_influenced and resolution.selected_strategy is not None:
             return Decision(
-                strategy=best.episode.strategy,
-                reason=(
-                    f"reused successful strategy {best.episode.strategy.value} "
-                    f"from episode {best.episode.episode_id}"
-                ),
-                recalled_episode_ids=(best.episode.episode_id,),
-                recalled_producer_agent_ids=self._producer_ids(best),
+                strategy=resolution.selected_strategy,
+                reason=resolution.reason,
+                recalled_episode_ids=resolution.episode_ids,
+                recalled_producer_agent_ids=resolution.producer_agent_ids,
                 memory_influenced=True,
+                memory_resolution=resolution.resolution,
+                memory_conflict=resolution.conflict,
             )
-
-        failed_generic = [
-            item
-            for item in relevant
-            if item.episode.strategy == Strategy.GENERIC_RETRY
-            and item.episode.outcome == Outcome.FAILED
-            and item.episode.confidence >= 0.6
-        ]
-        if failed_generic:
-            best = max(failed_generic, key=lambda item: item.similarity)
-            return Decision(
-                strategy=Strategy.REFRESH_PAYMENT_TOKEN,
-                reason=(
-                    "avoided GENERIC_RETRY because a similar remembered "
-                    f"episode failed: {best.episode.episode_id}"
-                ),
-                recalled_episode_ids=(best.episode.episode_id,),
-                recalled_producer_agent_ids=self._producer_ids(best),
-                memory_influenced=True,
-            )
-
         return Decision(
             strategy=Strategy.GENERIC_RETRY,
-            reason="no sufficiently relevant outcome memory; use safe default",
+            reason=resolution.reason,
+            recalled_episode_ids=resolution.episode_ids,
+            recalled_producer_agent_ids=resolution.producer_agent_ids,
             memory_influenced=False,
+            memory_resolution=resolution.resolution,
+            memory_conflict=resolution.conflict,
         )
-
-    @staticmethod
-    def _producer_ids(item: RecalledEpisode) -> tuple[str, ...]:
-        producer = str(item.episode.evidence.get("producer_agent_id", "")).strip()
-        return (producer,) if producer else ()

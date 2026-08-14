@@ -15,7 +15,7 @@ Baseline:
 8 tests PASS
 
 Current local verification:
-34 tests PASS
+42 tests PASS
 CockroachDB Cloud persistence smoke: PASS
 Fresh-process recall changed agent behavior: PASS
 Memory-off causal baseline: PASS
@@ -92,3 +92,15 @@ GitHub MIT license detection: PASS
 Devpost copy-ready submission package: PASS
 Private judge testing-instructions template: PASS
 <3 minute video storyboard / narration plan: PASS
+Multi-agent conflict governance unit suite: PASS
+Balanced contradictory memories → `CONFLICT_ABSTAIN`: PASS
+Server-side producer trust resolves winner without hiding conflict: PASS
+Stale-memory propagation gate: PASS
+Supersession removes obsolete episode from resolution: PASS
+Duplicate same-producer writes cannot amplify a vote: PASS
+Competing successful strategies can abstain instead of silently picking: PASS
+CockroachDB Cloud + NVIDIA semantic governance smoke: PASS
+Governance Cloud temporary rows cleanup: PASS
+Post-governance Phase 8 local regression: 56/56 PASS
+Post-governance Phase 8 Cloud regression: 28/28 PASS
+Protected `/governance-demo` implementation: PASS locally; AWS redeploy pending refreshed AWS CLI login

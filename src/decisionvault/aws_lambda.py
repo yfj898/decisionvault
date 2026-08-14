@@ -7,6 +7,8 @@ from typing import Any
 from uuid import uuid4
 
 from decisionvault.agent.engine import DecisionAgent
+from decisionvault.agent.memory_governance import ConflictAwareMemoryResolver
+from decisionvault.agent.policy import OutcomeAwarePolicy
 from decisionvault.domain import Decision, Outcome, Strategy
 from decisionvault.memory.cockroach import CockroachVectorMemoryStore
 from decisionvault.memory.connection import psycopg_connection_factory
@@ -25,6 +27,10 @@ DEMO_FIRST_CASE = (
 DEMO_SIMILAR_CASE = (
     "payment failed again after the customer replaced the card; "
     "the saved token looks stale"
+)
+GOVERNANCE_CONFLICT_CASE = (
+    "replacement card payment still fails and the authorization credential "
+    "may need a refresh"
 )
 SECURITY_HEADERS = {
     "x-content-type-options": "nosniff",
@@ -83,6 +89,22 @@ def _authorized(event: dict[str, Any]) -> bool:
     return headers.get("x-decisionvault-token", "") == expected
 
 
+def _producer_trust_registry() -> dict[str, float]:
+    raw = os.getenv("AGENT_TRUST_JSON", "").strip()
+    if not raw:
+        return {}
+    parsed = json.loads(raw)
+    if not isinstance(parsed, dict):
+        raise ValueError("AGENT_TRUST_JSON must be a JSON object")
+    registry: dict[str, float] = {}
+    for agent_id, value in parsed.items():
+        trust = float(value)
+        if not 0.0 <= trust <= 1.0:
+            raise ValueError("agent trust values must be between 0 and 1")
+        registry[str(agent_id)] = trust
+    return registry
+
+
 def _build_agent(
     *,
     memory_enabled: bool,
@@ -124,6 +146,11 @@ def _build_agent(
         )
     return DecisionAgent(
         memory=store,
+        policy=OutcomeAwarePolicy(
+            resolver=ConflictAwareMemoryResolver(
+                producer_trust=_producer_trust_registry()
+            )
+        ),
         memory_enabled=memory_enabled,
         advisor=advisor,
         agent_id=agent_id,
@@ -176,6 +203,8 @@ def _decision_payload(decision: Decision) -> dict[str, Any]:
         "memory_influenced": decision.memory_influenced,
         "recalled_episode_ids": list(decision.recalled_episode_ids),
         "recalled_producer_agent_ids": list(decision.recalled_producer_agent_ids),
+        "memory_resolution": decision.memory_resolution,
+        "memory_conflict": decision.memory_conflict,
         "model_provider": decision.model_provider,
         "model_explanation": decision.model_explanation,
     }
@@ -235,6 +264,56 @@ def _demo() -> dict[str, Any]:
     return result
 
 
+def _governance_demo() -> dict[str, Any]:
+    scope_id = f"phase-governance-demo-{uuid4()}"
+    producer_a = "recovery-observer-a"
+    producer_b = "recovery-observer-b"
+    consumer = "recovery-supervisor"
+    result: dict[str, Any] = {}
+    try:
+        _build_agent(memory_enabled=True, agent_id=producer_a).record_outcome(
+            scope_id=scope_id,
+            situation=GOVERNANCE_CONFLICT_CASE,
+            decision=Decision(
+                strategy=Strategy.REFRESH_PAYMENT_TOKEN,
+                reason="producer A observed a successful token refresh",
+            ),
+            outcome=Outcome.SUCCESS,
+            effectiveness=0.9,
+            confidence=1.0,
+        )
+        _build_agent(memory_enabled=True, agent_id=producer_b).record_outcome(
+            scope_id=scope_id,
+            situation=GOVERNANCE_CONFLICT_CASE,
+            decision=Decision(
+                strategy=Strategy.REFRESH_PAYMENT_TOKEN,
+                reason="producer B observed the same strategy fail",
+            ),
+            outcome=Outcome.FAILED,
+            effectiveness=0.1,
+            confidence=1.0,
+        )
+        decision = _build_agent(memory_enabled=True, agent_id=consumer).decide(
+            scope_id=scope_id,
+            situation=GOVERNANCE_CONFLICT_CASE,
+        )
+        result = {
+            "decision": _decision_payload(decision),
+            "producer_agent_ids": [producer_a, producer_b],
+            "consumer_agent_id": consumer,
+            "expected_abstention": (
+                decision.strategy == Strategy.GENERIC_RETRY
+                and not decision.memory_influenced
+                and decision.memory_conflict
+                and decision.memory_resolution == "CONFLICT_ABSTAIN"
+            ),
+        }
+    finally:
+        _delete_scope(scope_id)
+    result["cleaned"] = True
+    return result
+
+
 def _record(body: dict[str, Any]) -> dict[str, Any]:
     scope_id = str(body.get("scope_id", "")).strip()
     situation = str(body.get("situation", "")).strip()
@@ -246,6 +325,10 @@ def _record(body: dict[str, Any]) -> dict[str, Any]:
     effectiveness = float(body.get("effectiveness"))
     confidence = float(body.get("confidence", 1.0))
     agent_id = str(body.get("agent_id", "recovery-observer")).strip()
+    evidence: dict[str, str] = {}
+    supersedes_episode_id = str(body.get("supersedes_episode_id", "")).strip()
+    if supersedes_episode_id:
+        evidence["supersedes_episode_id"] = supersedes_episode_id
     decision = Decision(
         strategy=strategy,
         reason=str(body.get("decision_reason", "recorded via Lambda API")),
@@ -257,6 +340,7 @@ def _record(body: dict[str, Any]) -> dict[str, Any]:
         outcome=outcome,
         effectiveness=effectiveness,
         confidence=confidence,
+        evidence=evidence,
     )
     return {
         "episode_id": episode.episode_id,
@@ -291,6 +375,8 @@ def lambda_handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
             return _json_response(201, _record(body))
         if method == "POST" and path == "/demo":
             return _json_response(200, _demo())
+        if method == "POST" and path == "/governance-demo":
+            return _json_response(200, _governance_demo())
         return _json_response(404, {"error": "not_found"})
     except (ValueError, TypeError, json.JSONDecodeError) as exc:
         return _json_response(400, {"error": "bad_request", "detail": str(exc)})

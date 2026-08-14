@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
+from typing import Mapping
 from uuid import uuid4
 
 from decisionvault.domain import Decision, DecisionEpisode, Outcome
@@ -13,7 +14,7 @@ from decisionvault.providers.base import DecisionAdvisor
 @dataclass(slots=True)
 class DecisionAgent:
     memory: MemoryStore
-    policy: OutcomeAwarePolicy = OutcomeAwarePolicy()
+    policy: OutcomeAwarePolicy = field(default_factory=OutcomeAwarePolicy)
     memory_enabled: bool = True
     advisor: DecisionAdvisor | None = None
     agent_id: str = "decision-agent"
@@ -56,7 +57,15 @@ class DecisionAgent:
         outcome: Outcome,
         effectiveness: float,
         confidence: float = 1.0,
+        evidence: Mapping[str, str] | None = None,
     ) -> DecisionEpisode:
+        episode_evidence = dict(evidence or {})
+        episode_evidence.update(
+            {
+                "decision_reason": decision.reason,
+                "producer_agent_id": self.agent_id,
+            }
+        )
         episode = DecisionEpisode(
             episode_id=str(uuid4()),
             scope_id=scope_id,
@@ -65,10 +74,7 @@ class DecisionAgent:
             outcome=outcome,
             effectiveness=effectiveness,
             confidence=confidence,
-            evidence={
-                "decision_reason": decision.reason,
-                "producer_agent_id": self.agent_id,
-            },
+            evidence=episode_evidence,
             created_at=datetime.now(timezone.utc),
         )
         self.memory.save(episode)

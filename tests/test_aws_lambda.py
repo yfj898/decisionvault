@@ -121,6 +121,20 @@ def test_demo_requires_demo_token_when_configured(monkeypatch):
     assert response["statusCode"] == 401
 
 
+def test_governance_demo_requires_demo_token_when_configured(monkeypatch):
+    monkeypatch.setenv("DEMO_API_TOKEN", "local-demo-token")
+    response = aws_lambda.lambda_handler(
+        {
+            "requestContext": {"http": {"method": "POST"}},
+            "rawPath": "/governance-demo",
+            "headers": {},
+            "body": "{}",
+        },
+        None,
+    )
+    assert response["statusCode"] == 401
+
+
 def test_post_routes_accept_matching_demo_token(monkeypatch):
     monkeypatch.setenv("DEMO_API_TOKEN", "local-demo-token")
     response = aws_lambda.lambda_handler(

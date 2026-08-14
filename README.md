@@ -162,6 +162,47 @@ paraphrased future case produced cosine similarity `0.4541`, crossed the unchang
 `0.30` policy relevance gate, and changed Agent B's strategy. See
 `docs/evidence/SHARED_AGENT_MEMORY_SEMANTIC_RUNTIME.md`.
 
+## Multi-agent memory governance
+
+Shared memory is not treated as an ungoverned vote pool. Before recalled
+episodes can influence a strategy, `ConflictAwareMemoryResolver` applies explicit
+governance rules:
+
+- **provenance** — every outcome carries `producer_agent_id`;
+- **scope isolation** — retrieval remains bound to the requested `scope_id`;
+- **staleness** — memories older than the configured age window do not propagate;
+- **supersession** — a corrective episode can retire an obsolete episode through
+  `supersedes_episode_id`;
+- **duplicate amplification resistance** — one producer cannot gain extra voting
+  power by repeatedly writing the same strategy;
+- **contradiction surfacing** — similarly strong conflicting memories return
+  `CONFLICT_ABSTAIN` instead of silently selecting one side;
+- **server-side trust weighting** — optional `AGENT_TRUST_JSON` weights are
+  deployment policy, not claims supplied by the producing agent. Trust may
+  resolve a conflict, but the returned decision keeps `memory_conflict=true` so
+  the disagreement remains auditable.
+
+The real CockroachDB Cloud + NVIDIA semantic governance smoke verified:
+
+```text
+balanced conflict      → GENERIC_RETRY / CONFLICT_ABSTAIN
+trusted resolution     → REFRESH_PAYMENT_TOKEN / conflict still visible
+120-day stale success  → ignored
+superseded success     → old episode no longer participates
+duplicate producer     → cannot outvote an independent conflicting producer
+Cloud cleanup          → PASS
+```
+
+The governance layer was then regression-tested against the frozen Phase 8
+benchmark: `56/56` local and `28/28` CockroachDB Cloud cases still pass with the
+same Memory ON/OFF metrics. Reproduce the Cloud governance path with:
+
+```bash
+uv run python scripts/multi_agent_governance_smoke.py --semantic
+```
+
+See `docs/evidence/MULTI_AGENT_MEMORY_GOVERNANCE.md`.
+
 ## Phase 6 — AWS Lambda deployment
 
 DecisionVault is deployed as an AWS Lambda Python 3.12 function in
@@ -302,6 +343,9 @@ repository. See `docs/evidence/PHASE4_MANAGED_MCP.md`.
 - [x] Real external model invocation evidence (NVIDIA; Bedrock optional)
 - [x] Real NVIDIA semantic embedding path (`passage` / `query`)
 - [x] Cross-agent outcome-memory provenance and scope isolation
+- [x] Conflict-aware multi-agent memory governance
+- [x] Staleness / supersession / duplicate-amplification controls
+- [x] Server-side producer trust weighting with conflict visibility
 - [x] AWS Lambda hosted demo
 - [x] Responsive public judge UI
 - [x] Protected one-click Memory OFF vs Memory ON proof

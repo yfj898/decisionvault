@@ -62,5 +62,7 @@ class Decision:
     recalled_episode_ids: tuple[str, ...] = ()
     recalled_producer_agent_ids: tuple[str, ...] = ()
     memory_influenced: bool = False
+    memory_resolution: str = "NO_SIGNAL"
+    memory_conflict: bool = False
     model_explanation: str | None = None
     model_provider: str | None = None
