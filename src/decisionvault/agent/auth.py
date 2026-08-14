@@ -10,7 +10,7 @@ SCOPE_BOUNDARIES = frozenset("-/:._")
 AGENT_PERMISSIONS = frozenset({"decide", "execute", "record", "revoke"})
 
 
-def _scope_prefix_matches(prefix: str, scope_id: str) -> bool:
+def scope_prefix_matches(prefix: str, scope_id: str) -> bool:
     if scope_id == prefix:
         return True
     if not scope_id.startswith(prefix):
@@ -18,6 +18,10 @@ def _scope_prefix_matches(prefix: str, scope_id: str) -> bool:
     if prefix[-1] in SCOPE_BOUNDARIES:
         return True
     return len(scope_id) > len(prefix) and scope_id[len(prefix)] in SCOPE_BOUNDARIES
+
+
+# Backward-compatible internal alias for older callers/tests.
+_scope_prefix_matches = scope_prefix_matches
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,7 +34,7 @@ class AgentGrant:
     def allows(self, *, permission: str, scope_id: str) -> bool:
         if permission not in self.permissions:
             return False
-        return any(_scope_prefix_matches(prefix, scope_id) for prefix in self.scope_prefixes)
+        return any(scope_prefix_matches(prefix, scope_id) for prefix in self.scope_prefixes)
 
 
 def token_digest(token: str) -> str:

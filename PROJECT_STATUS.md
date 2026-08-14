@@ -15,7 +15,15 @@ Baseline:
 8 tests PASS
 
 Current local verification:
-178 tests PASS
+198 tests PASS
+Governed Adaptive Memory v7 local hardening: PASS
+Signing-key ID + retained verification keyring / legacy-keyless compatibility: PASS
+Durable consolidation outbox / lease / exponential retry: PASS
+Distinct runtime vs consolidator CockroachDB identity contract: PASS
+PRIVATE / TEAM / GLOBAL server-owned memory-scope control: PASS
+Memory-health EMF + EventBridge/CloudWatch provisioning contracts: PASS
+Real CockroachDB v7 expand migration: PASS (9 statements / generation-safe outbox + consolidator role / no runtime REVOKE yet)
+Production v7 cutover: BLOCKED SAFELY on governance-authorized Secrets Manager update; current deployed v6 remains unchanged
 Post-adaptive Phase 8 local benchmark: 56/56 PASS
 GitHub Actions run `31792492469` (`5e5c3f0`): SUCCESS after CI pytest root-import parity fix
 Governed Adaptive Memory v6 local implementation: PASS

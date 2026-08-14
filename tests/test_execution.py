@@ -170,3 +170,81 @@ def test_signed_snapshot_and_receipt_preserve_governed_memory_provenance():
     assert receipt.decision_provenance is not None
     assert receipt.decision_provenance["recalled_memory_ids"] == ["memory-a"]
     assert receipt.decision_provenance["governance_trace"]["adaptive_applicable"] == 1
+
+
+def test_keyed_receipt_survives_active_signing_key_rotation():
+    old_secret = "old-execution-signing-secret-123"
+    new_secret = "new-execution-signing-secret-456"
+    payload = issue_sandbox_receipt(
+        scope_id="team-a",
+        agent_id="executor-a",
+        situation="stale token",
+        strategy=Strategy.REFRESH_PAYMENT_TOKEN,
+        scenario="stale_payment_token",
+        signing_secret=old_secret,
+        signing_key_id="key-1",
+        now=NOW,
+    )
+
+    receipt = verify_execution_receipt(
+        payload,
+        signing_secret=new_secret,
+        verification_secrets={"key-1": old_secret, "key-2": new_secret},
+        expected_scope_id="team-a",
+        expected_agent_id="executor-a",
+        ttl_seconds=None,
+        now=NOW + timedelta(days=30),
+    )
+
+    assert receipt.signing_key_id == "key-1"
+    assert receipt.outcome == Outcome.SUCCESS
+
+
+def test_legacy_keyless_receipt_survives_rotation_when_old_key_is_retained():
+    old_secret = "legacy-execution-signing-secret-123"
+    new_secret = "new-execution-signing-secret-456"
+    payload = issue_sandbox_receipt(
+        scope_id="team-a",
+        agent_id="executor-a",
+        situation="stale token",
+        strategy=Strategy.REFRESH_PAYMENT_TOKEN,
+        scenario="stale_payment_token",
+        signing_secret=old_secret,
+        now=NOW,
+    )
+
+    receipt = verify_execution_receipt(
+        payload,
+        signing_secret=new_secret,
+        verification_secrets={"legacy-key": old_secret, "key-2": new_secret},
+        expected_scope_id="team-a",
+        expected_agent_id="executor-a",
+        ttl_seconds=None,
+        now=NOW + timedelta(days=30),
+    )
+
+    assert receipt.signing_key_id is None
+
+
+def test_keyed_receipt_never_falls_back_to_a_different_key():
+    payload = issue_sandbox_receipt(
+        scope_id="team-a",
+        agent_id="executor-a",
+        situation="stale token",
+        strategy=Strategy.REFRESH_PAYMENT_TOKEN,
+        scenario="stale_payment_token",
+        signing_secret="old-execution-signing-secret-123",
+        signing_key_id="retired-key",
+        now=NOW,
+    )
+
+    with pytest.raises(ValueError, match="key id"):
+        verify_execution_receipt(
+            payload,
+            signing_secret="new-execution-signing-secret-456",
+            verification_secrets={"active-key": "new-execution-signing-secret-456"},
+            expected_scope_id="team-a",
+            expected_agent_id="executor-a",
+            ttl_seconds=None,
+            now=NOW,
+        )

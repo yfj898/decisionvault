@@ -48,3 +48,56 @@ def emit_request_metric(
         "IdempotentReplayCount": int(idempotent_replay),
     }
     print(json.dumps(event, separators=(",", ":"), sort_keys=True), flush=True)
+
+
+def emit_memory_metric(
+    *,
+    event_name: str,
+    consolidation_completed: int = 0,
+    consolidation_deferred: int = 0,
+    promoted: int = 0,
+    abstained: int = 0,
+    producer_retired: int = 0,
+    outbox_backlog: int = 0,
+    negative_veto: int = 0,
+    cross_layer_conflict: int = 0,
+    adaptive_hit: int = 0,
+    secret_refresh_failure: int = 0,
+) -> None:
+    """Emit fixed-name, low-cardinality memory-health metrics.
+
+    ``event_name`` is supplied only by server-controlled call sites. Scope IDs,
+    producers, situations, model text, and credential material are deliberately
+    excluded so the metrics remain safe for long-term CloudWatch retention.
+    """
+
+    values = {
+        "ConsolidationCompletedCount": int(consolidation_completed),
+        "ConsolidationDeferredCount": int(consolidation_deferred),
+        "GovernedPromotionCount": int(promoted),
+        "GovernedAbstentionCount": int(abstained),
+        "ProducerRetiredCount": int(producer_retired),
+        "ConsolidationOutboxBacklog": int(outbox_backlog),
+        "NegativeMemoryVetoCount": int(negative_veto),
+        "CrossLayerConflictCount": int(cross_layer_conflict),
+        "AdaptiveMemoryHitCount": int(adaptive_hit),
+        "SecretRefreshFailureCount": int(secret_refresh_failure),
+    }
+    event: dict[str, Any] = {
+        "_aws": {
+            "Timestamp": int(time.time() * 1000),
+            "CloudWatchMetrics": [
+                {
+                    "Namespace": "DecisionVault",
+                    "Dimensions": [["MemoryEvent"]],
+                    "Metrics": [
+                        {"Name": name, "Unit": "Count"}
+                        for name in values
+                    ],
+                }
+            ],
+        },
+        "MemoryEvent": event_name,
+        **values,
+    }
+    print(json.dumps(event, separators=(",", ":"), sort_keys=True), flush=True)

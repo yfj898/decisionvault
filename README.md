@@ -118,6 +118,18 @@ DVI, read-only Managed MCP auditor, Lambda hosted regression, 14/14 semantic
 benchmark, and final zero-row cleanup are recorded in
 `docs/evidence/GOVERNED_ADAPTIVE_MEMORY_V6.md`.
 
+Governed Adaptive Memory v7 hardens long-running operations around that v6
+authority model: signed snapshots/receipts support explicit signing-key IDs and
+retained verification keys; every current-head mutation creates a durable
+consolidation obligation; a separately authenticated CockroachDB consolidator
+owns L2/L3 promotion while request runtime retains only the synchronous L3
+invalidation rights required for correctness; PRIVATE/TEAM/GLOBAL promotion
+levels are server-owned; and fixed-name memory-health metrics feed a scheduled
+retry worker plus CloudWatch alarms/dashboard. Production rollout is deliberately
+expand/contract so runtime rights are not revoked until the new Lambda proves a
+distinct consolidator identity. Current v7 rollout evidence is recorded in
+`docs/evidence/GOVERNED_ADAPTIVE_MEMORY_V7.md`.
+
 Verified competition integrations:
 
 - CockroachDB Distributed Vector Indexing

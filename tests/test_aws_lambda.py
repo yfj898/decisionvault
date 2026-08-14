@@ -974,10 +974,28 @@ def test_demo_scope_cleanup_does_not_require_revocation_delete_privilege(monkeyp
 
 
 def test_consolidation_failure_defers_without_creating_ungoverned_memory(monkeypatch):
+    class Outbox:
+        def claim_scope(self, scope_id):
+            return aws_lambda.ConsolidationWorkItem(
+                scope_id=scope_id,
+                scope_level=aws_lambda.MemoryScopeLevel.TEAM,
+                attempt_count=0,
+                generation=1,
+            )
+
+        def mark_deferred(self, **_kwargs):
+            return 2
+
+        def backlog_count(self):
+            return 1
+
+    monkeypatch.setattr(aws_lambda, "_build_consolidation_outbox", lambda: Outbox())
     monkeypatch.setattr(
         aws_lambda,
         "_consolidate_scope",
-        lambda _scope_id: (_ for _ in ()).throw(RuntimeError("provider unavailable")),
+        lambda _scope_id, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("provider unavailable")
+        ),
     )
 
     result = aws_lambda._best_effort_consolidation("demo")
@@ -987,3 +1005,72 @@ def test_consolidation_failure_defers_without_creating_ungoverned_memory(monkeyp
     assert result["memory_ids"] == []
     assert result["governance_revision"] == "governed-adaptive-memory-v1"
     assert result["resolutions"] == ["CONSOLIDATION_DEFERRED:RuntimeError"]
+
+
+def test_memory_scope_level_is_server_controlled_and_prefix_specific(monkeypatch):
+    monkeypatch.setenv("DEFAULT_MEMORY_SCOPE_LEVEL", "TEAM")
+    monkeypatch.setenv(
+        "MEMORY_SCOPE_LEVELS_JSON",
+        json.dumps(
+            {
+                "private/": "PRIVATE",
+                "global/": "GLOBAL",
+                "global/payments/": "TEAM",
+            }
+        ),
+    )
+
+    assert aws_lambda._memory_scope_level("private/customer-1") == aws_lambda.MemoryScopeLevel.PRIVATE
+    assert aws_lambda._memory_scope_level("global/payments/merchant-1") == aws_lambda.MemoryScopeLevel.TEAM
+    assert aws_lambda._memory_scope_level("global/risk") == aws_lambda.MemoryScopeLevel.GLOBAL
+    assert aws_lambda._memory_scope_level("ordinary/team") == aws_lambda.MemoryScopeLevel.TEAM
+
+
+def test_agent_api_rejects_caller_supplied_memory_scope_level(monkeypatch):
+    token = _configure_agent(monkeypatch)
+    monkeypatch.setattr(aws_lambda, "hydrate_runtime_secrets", lambda: None)
+    monkeypatch.setattr(aws_lambda, "_refresh_runtime_security_state", lambda **_kwargs: None)
+
+    response = aws_lambda.lambda_handler(
+        {
+            "requestContext": {"http": {"method": "POST"}},
+            "rawPath": "/decide",
+            "headers": {"X-DecisionVault-Agent-Token": token},
+            "body": json.dumps(
+                {
+                    "scope_id": "demo",
+                    "situation": "payment failed",
+                    "memory_scope_level": "PRIVATE",
+                }
+            ),
+        },
+        None,
+    )
+
+    assert response["statusCode"] == 400
+    assert json.loads(response["body"])["error"] == "memory_scope_level_is_server_bound"
+
+
+def test_scheduled_event_drains_durable_consolidation_outbox(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        aws_lambda,
+        "_refresh_runtime_security_state",
+        lambda **_kwargs: calls.append("security"),
+    )
+    monkeypatch.setattr(
+        aws_lambda,
+        "_drain_consolidation_outbox",
+        lambda: {"completed": 2, "deferred": 0, "backlog": 0},
+    )
+
+    response = aws_lambda.lambda_handler(
+        {"source": "aws.events", "detail-type": "Scheduled Event"},
+        None,
+    )
+
+    assert response["statusCode"] == 200
+    body = json.loads(response["body"])
+    assert body["scheduled"] == "consolidation-retry"
+    assert body["result"]["completed"] == 2
+    assert calls == ["security"]

@@ -66,6 +66,7 @@ class VerifiedExecutionReceipt:
     confidence: float
     issued_at: datetime
     signature: str
+    signing_key_id: str | None = None
     decision_snapshot_id: str | None = None
     decision_digest: str | None = None
     decision_revision: str | None = None
@@ -85,6 +86,7 @@ class VerifiedDecisionSnapshot:
     decision_revision: str
     issued_at: datetime
     signature: str
+    signing_key_id: str | None
     decision_provenance: Mapping[str, Any]
 
 
@@ -110,6 +112,33 @@ def _sign(payload: dict[str, Any], secret: str) -> str:
         _canonical_payload(payload),
         sha256,
     ).hexdigest()
+
+
+def _verification_secret(
+    payload: Mapping[str, Any],
+    *,
+    signing_secret: str,
+    verification_secrets: Mapping[str, str] | None,
+) -> tuple[tuple[str, ...], str | None]:
+    """Resolve the exact key bound into a signed artifact.
+
+    Legacy artifacts without a key id continue to verify against the supplied
+    current/legacy secret. Keyed artifacts must name a retained verification
+    key, so normal rotation cannot silently invalidate historical receipts.
+    """
+
+    key_id = str(payload.get("signing_key_id", "")).strip() or None
+    if key_id is None:
+        candidates = [signing_secret]
+        if verification_secrets is not None:
+            candidates.extend(str(value) for value in verification_secrets.values())
+        return tuple(dict.fromkeys(candidates)), None
+    if verification_secrets is None:
+        raise ValueError("signed artifact key id is not available for verification")
+    secret = str(verification_secrets.get(key_id, ""))
+    if len(secret) < 16:
+        raise ValueError("signed artifact key id is not available for verification")
+    return (secret,), key_id
 
 
 def decision_state_digest(
@@ -166,6 +195,7 @@ def issue_decision_snapshot(
     signing_secret: str,
     decision_revision: str = DECISION_CONTRACT_REVISION,
     decision_provenance: Mapping[str, Any] | None = None,
+    signing_key_id: str | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     issued_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -181,6 +211,8 @@ def issue_decision_snapshot(
         "decision_provenance": dict(decision_provenance or {}),
         "issued_at": issued_at.isoformat(),
     }
+    if signing_key_id:
+        payload["signing_key_id"] = signing_key_id
     payload["signature"] = _sign(payload, signing_secret)
     return payload
 
@@ -189,6 +221,7 @@ def verify_decision_snapshot(
     payload: Any,
     *,
     signing_secret: str,
+    verification_secrets: Mapping[str, str] | None = None,
     expected_scope_id: str,
     expected_situation: str,
     expected_strategy: Strategy,
@@ -200,7 +233,15 @@ def verify_decision_snapshot(
     signature = str(payload.get("signature", "")).strip()
     if not signature:
         raise ValueError("decision snapshot signature is required")
-    if not hmac.compare_digest(signature, _sign(payload, signing_secret)):
+    verification_candidates, signing_key_id = _verification_secret(
+        payload,
+        signing_secret=signing_secret,
+        verification_secrets=verification_secrets,
+    )
+    if not any(
+        hmac.compare_digest(signature, _sign(payload, candidate))
+        for candidate in verification_candidates
+    ):
         raise ValueError("decision snapshot signature is invalid")
     if int(payload.get("version", 0)) != DECISION_SNAPSHOT_VERSION:
         raise ValueError("unsupported decision snapshot version")
@@ -247,6 +288,7 @@ def verify_decision_snapshot(
         decision_revision=decision_revision,
         issued_at=issued_at,
         signature=signature,
+        signing_key_id=signing_key_id,
         decision_provenance=provenance,
     )
 
@@ -264,6 +306,7 @@ def issue_sandbox_receipt(
     decision_revision: str | None = None,
     decision_agent_id: str | None = None,
     decision_provenance: Mapping[str, Any] | None = None,
+    signing_key_id: str | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     scenario_outcomes = SANDBOX_OUTCOMES.get(scenario)
@@ -289,6 +332,8 @@ def issue_sandbox_receipt(
         "confidence": 1.0,
         "issued_at": issued_at.isoformat(),
     }
+    if signing_key_id:
+        payload["signing_key_id"] = signing_key_id
     if decision_snapshot_id:
         if not decision_digest or not decision_revision or not decision_agent_id:
             raise ValueError("snapshot-bound receipt requires decision digest/revision")
@@ -309,6 +354,7 @@ def verify_execution_receipt(
     payload: Any,
     *,
     signing_secret: str,
+    verification_secrets: Mapping[str, str] | None = None,
     expected_scope_id: str,
     expected_agent_id: str,
     ttl_seconds: int | None = DEFAULT_RECEIPT_TTL_SECONDS,
@@ -319,8 +365,15 @@ def verify_execution_receipt(
     signature = str(payload.get("signature", "")).strip()
     if not signature:
         raise ValueError("execution receipt signature is required")
-    expected_signature = _sign(payload, signing_secret)
-    if not hmac.compare_digest(signature, expected_signature):
+    verification_candidates, signing_key_id = _verification_secret(
+        payload,
+        signing_secret=signing_secret,
+        verification_secrets=verification_secrets,
+    )
+    if not any(
+        hmac.compare_digest(signature, _sign(payload, candidate))
+        for candidate in verification_candidates
+    ):
         raise ValueError("execution receipt signature is invalid")
 
     version = int(payload.get("version", 0))
@@ -394,6 +447,7 @@ def verify_execution_receipt(
         confidence=confidence,
         issued_at=issued_at,
         signature=signature,
+        signing_key_id=signing_key_id,
         decision_snapshot_id=decision_snapshot_id,
         decision_digest=decision_digest,
         decision_revision=decision_revision,

@@ -141,3 +141,38 @@ def test_concurrent_secret_refresh_generations_are_serialized(monkeypatch):
         thread.join()
 
     assert state["max_active"] == 1
+
+
+def test_optional_keyring_and_consolidator_url_are_hydrated_when_present(monkeypatch):
+    import os
+    import sys
+
+    runtime_secrets.load_runtime_secrets.cache_clear()
+    monkeypatch.setenv("DECISIONVAULT_SECRET_ARN", "arn:test:decisionvault")
+    payload = {
+        **_payload(),
+        "EXECUTION_RECEIPT_KEYRING_JSON": '{"active_key_id":"k2","keys":{}}',
+        "CONSOLIDATION_DATABASE_URL": "postgresql://consolidator",
+    }
+    monkeypatch.setitem(sys.modules, "boto3", FakeBoto3(payload))
+
+    runtime_secrets.hydrate_runtime_secrets()
+
+    assert os.environ["CONSOLIDATION_DATABASE_URL"] == "postgresql://consolidator"
+    assert "active_key_id" in os.environ["EXECUTION_RECEIPT_KEYRING_JSON"]
+
+
+def test_managed_refresh_removes_retired_optional_secret_fields(monkeypatch):
+    import os
+    import sys
+
+    runtime_secrets.load_runtime_secrets.cache_clear()
+    monkeypatch.setenv("DECISIONVAULT_SECRET_ARN", "arn:test:decisionvault")
+    monkeypatch.setenv("CONSOLIDATION_DATABASE_URL", "postgresql://stale")
+    monkeypatch.setenv("EXECUTION_RECEIPT_KEYRING_JSON", '{"stale":true}')
+    monkeypatch.setitem(sys.modules, "boto3", FakeBoto3(_payload()))
+
+    runtime_secrets.hydrate_runtime_secrets(force=True)
+
+    assert "CONSOLIDATION_DATABASE_URL" not in os.environ
+    assert "EXECUTION_RECEIPT_KEYRING_JSON" not in os.environ

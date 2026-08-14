@@ -15,7 +15,12 @@ from decisionvault.adaptive_memory import (
     derive_context_tags,
 )
 from decisionvault.agent.engine import DecisionAgent
-from decisionvault.agent.auth import AgentGrant, authenticate_agent, load_agent_grants
+from decisionvault.agent.auth import (
+    AgentGrant,
+    authenticate_agent,
+    load_agent_grants,
+    scope_prefix_matches,
+)
 from decisionvault.agent.memory_governance import (
     PRODUCTION_SEMANTIC_MIN_SIMILARITY,
     ConflictAwareMemoryResolver,
@@ -39,12 +44,13 @@ from decisionvault.memory.cockroach import (
 )
 from decisionvault.memory.connection import psycopg_connection_factory
 from decisionvault.memory.consolidation import CockroachMemoryConsolidationService
+from decisionvault.memory.outbox import ConsolidationOutbox, ConsolidationWorkItem
 from decisionvault.memory.embedding import (
     NvidiaSemanticEmbedder,
     deterministic_text_embedding,
     semantic_embedding_space,
 )
-from decisionvault.observability import emit_request_metric
+from decisionvault.observability import emit_memory_metric, emit_request_metric
 from decisionvault.providers.nvidia import NvidiaDecisionAdvisor
 from decisionvault.providers.http_security import validate_nvidia_base_url
 from decisionvault.rate_limit import CockroachRateLimiter
@@ -323,16 +329,119 @@ def _refresh_runtime_security_state(*, force: bool = False) -> None:
         active_producer_agent_ids=active,
         reason="producer authorization retired by runtime grant reconciliation",
     )
+    retired_heads = int(getattr(retirement, "retired_heads", 0))
+    if retired_heads:
+        try:
+            emit_memory_metric(
+                event_name="producer_retirement",
+                producer_retired=retired_heads,
+            )
+        except Exception:
+            pass
     for scope_id in retirement.scope_ids:
         _best_effort_consolidation(scope_id)
     _SECURITY_RECONCILE_AT = now
 
 
 def _execution_secret() -> str:
+    _, secret, _ = _execution_signing_material()
+    return secret
+
+
+def _execution_signing_material() -> tuple[str | None, str, dict[str, str]]:
+    """Return active HMAC key plus retained verification-only keys."""
+
     secret = os.getenv("EXECUTION_RECEIPT_SECRET", "").strip()
     if len(secret) < 16:
         raise RuntimeError("EXECUTION_RECEIPT_SECRET is not configured")
-    return secret
+    raw = os.getenv("EXECUTION_RECEIPT_KEYRING_JSON", "").strip()
+    if not raw:
+        return None, secret, {}
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("EXECUTION_RECEIPT_KEYRING_JSON is invalid JSON") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("EXECUTION_RECEIPT_KEYRING_JSON must be an object")
+    active_key_id = str(payload.get("active_key_id", "")).strip()
+    raw_keys = payload.get("keys")
+    if not active_key_id or not isinstance(raw_keys, dict):
+        raise RuntimeError("execution signing keyring is missing active_key_id/keys")
+    keys = {str(key): str(value) for key, value in raw_keys.items()}
+    active_secret = keys.get(active_key_id, "")
+    if len(active_secret) < 16:
+        raise RuntimeError("execution signing keyring active key is missing or too short")
+    if any(len(value) < 16 for value in keys.values()):
+        raise RuntimeError("execution signing keyring contains a short verification key")
+    return active_key_id, active_secret, keys
+
+
+def _memory_scope_rules() -> tuple[
+    MemoryScopeLevel, tuple[tuple[str, MemoryScopeLevel], ...]
+]:
+    default_raw = os.getenv("DEFAULT_MEMORY_SCOPE_LEVEL", "TEAM").strip().upper()
+    try:
+        default = MemoryScopeLevel(default_raw)
+    except ValueError as exc:
+        raise RuntimeError("DEFAULT_MEMORY_SCOPE_LEVEL is invalid") from exc
+
+    raw = os.getenv("MEMORY_SCOPE_LEVELS_JSON", "").strip()
+    if not raw:
+        return default, ()
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("MEMORY_SCOPE_LEVELS_JSON is invalid JSON") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("MEMORY_SCOPE_LEVELS_JSON must be an object")
+
+    rules: list[tuple[str, MemoryScopeLevel]] = []
+    for raw_prefix, raw_level in payload.items():
+        prefix = str(raw_prefix).strip()
+        if not prefix or "*" in prefix:
+            raise RuntimeError("memory scope prefixes must be non-empty and wildcard-free")
+        try:
+            level = MemoryScopeLevel(str(raw_level).strip().upper())
+        except ValueError as exc:
+            raise RuntimeError("MEMORY_SCOPE_LEVELS_JSON contains an invalid level") from exc
+        rules.append((prefix, level))
+    rules.sort(key=lambda item: len(item[0]), reverse=True)
+    return default, tuple(rules)
+
+
+def _memory_scope_level(scope_id: str) -> MemoryScopeLevel:
+    """Resolve a server-owned PRIVATE/TEAM/GLOBAL policy for one scope."""
+
+    default, rules = _memory_scope_rules()
+    matches = [
+        (prefix, level)
+        for prefix, level in rules
+        if scope_prefix_matches(prefix, scope_id)
+    ]
+    if not matches:
+        return default
+    longest = len(matches[0][0])
+    strongest = {level for prefix, level in matches if len(prefix) == longest}
+    if len(strongest) != 1:
+        raise RuntimeError("conflicting memory scope rules have the same specificity")
+    return next(iter(strongest))
+
+
+def _consolidation_connection_factory():
+    url = os.getenv("CONSOLIDATION_DATABASE_URL", "").strip()
+    managed = bool(os.getenv("DECISIONVAULT_SECRET_ARN", "").strip())
+    if managed and not url:
+        raise RuntimeError("CONSOLIDATION_DATABASE_URL is required in managed mode")
+    if url:
+        return psycopg_connection_factory(url)
+    return psycopg_connection_factory()
+
+
+def _build_consolidation_outbox() -> ConsolidationOutbox:
+    return ConsolidationOutbox(
+        connection_factory=_consolidation_connection_factory(),
+        lease_seconds=max(30, int(os.getenv("CONSOLIDATION_LEASE_SECONDS", "120"))),
+    )
 
 
 def _build_memory_store() -> CockroachVectorMemoryStore:
@@ -355,11 +464,13 @@ def _build_memory_store() -> CockroachVectorMemoryStore:
             semantic_embedder=semantic.embed_passage,
             semantic_query_embedder=semantic.embed_query,
             semantic_embedding_space=semantic.embedding_space,
+            scope_level_resolver=_memory_scope_level,
         )
     else:
         store = CockroachVectorMemoryStore(
             connection_factory=psycopg_connection_factory(),
             embedder=deterministic_text_embedding,
+            scope_level_resolver=_memory_scope_level,
         )
     return store
 
@@ -369,21 +480,27 @@ def _build_consolidation_service() -> CockroachMemoryConsolidationService:
     if store.semantic_embedder is None or not (store.semantic_embedding_space or "").strip():
         raise RuntimeError("semantic embedding is required for adaptive consolidation")
     return CockroachMemoryConsolidationService(
-        connection_factory=store.connection_factory,
+        connection_factory=_consolidation_connection_factory(),
         semantic_embedder=store.semantic_embedder,
         semantic_embedding_space=str(store.semantic_embedding_space),
     )
 
 
-def _consolidate_scope(scope_id: str) -> dict[str, Any]:
+def _consolidate_scope(
+    scope_id: str,
+    *,
+    scope_level: MemoryScopeLevel | None = None,
+) -> dict[str, Any]:
+    resolved_scope_level = scope_level or _memory_scope_level(scope_id)
     active_producers = set(_producer_trust_registry())
     result = _build_consolidation_service().consolidate_scope(
         scope_id=scope_id,
-        scope_level=MemoryScopeLevel.TEAM,
+        scope_level=resolved_scope_level,
         active_producer_agent_ids=active_producers,
     )
     return {
         "status": "COMPLETE",
+        "scope_level": resolved_scope_level.value,
         "candidate_count": result.candidate_count,
         "promoted_count": result.promoted_count,
         "abstained_count": result.abstained_count,
@@ -402,8 +519,9 @@ def _best_effort_consolidation(scope_id: str) -> dict[str, Any]:
     and revocation semantics after those writes have already committed.
     """
 
+    outbox = _build_consolidation_outbox()
     try:
-        return _consolidate_scope(scope_id)
+        work = outbox.claim_scope(scope_id)
     except Exception as exc:
         return {
             "status": "DEFERRED",
@@ -411,9 +529,118 @@ def _best_effort_consolidation(scope_id: str) -> dict[str, Any]:
             "promoted_count": 0,
             "abstained_count": 0,
             "memory_ids": [],
+            "resolutions": [f"OUTBOX_CLAIM_DEFERRED:{type(exc).__name__}"],
+            "governance_revision": ADAPTIVE_MEMORY_GOVERNANCE_REVISION,
+        }
+    if work is None:
+        return {
+            "status": "DEFERRED",
+            "candidate_count": 0,
+            "promoted_count": 0,
+            "abstained_count": 0,
+            "memory_ids": [],
+            "resolutions": ["CONSOLIDATION_RETRY_ALREADY_SCHEDULED"],
+            "governance_revision": ADAPTIVE_MEMORY_GOVERNANCE_REVISION,
+        }
+    try:
+        result = _consolidate_scope(scope_id, scope_level=work.scope_level)
+        outbox.mark_complete(scope_id, generation=work.generation)
+        try:
+            emit_memory_metric(
+                event_name="consolidation_complete",
+                consolidation_completed=1,
+                promoted=result["promoted_count"],
+                abstained=result["abstained_count"],
+                outbox_backlog=outbox.backlog_count(),
+            )
+        except Exception:
+            pass
+        return result
+    except Exception as exc:
+        backoff = outbox.mark_deferred(
+            scope_id=scope_id,
+            error_code=type(exc).__name__,
+            attempt_count=work.attempt_count,
+            generation=work.generation,
+        )
+        try:
+            emit_memory_metric(
+                event_name="consolidation_deferred",
+                consolidation_deferred=1,
+                outbox_backlog=outbox.backlog_count(),
+            )
+        except Exception:
+            pass
+        return {
+            "status": "DEFERRED",
+            "scope_level": work.scope_level.value,
+            "candidate_count": 0,
+            "promoted_count": 0,
+            "abstained_count": 0,
+            "memory_ids": [],
+            "retry_after_seconds": backoff,
             "resolutions": [f"CONSOLIDATION_DEFERRED:{type(exc).__name__}"],
             "governance_revision": ADAPTIVE_MEMORY_GOVERNANCE_REVISION,
         }
+
+
+def _drain_consolidation_outbox(*, limit: int | None = None) -> dict[str, Any]:
+    outbox = _build_consolidation_outbox()
+    batch_size = max(
+        1,
+        min(
+            50,
+            int(
+                limit
+                if limit is not None
+                else os.getenv("CONSOLIDATION_RETRY_BATCH_SIZE", "10")
+            ),
+        ),
+    )
+    work_items = outbox.claim_due(limit=batch_size)
+    completed = 0
+    deferred = 0
+    promoted = 0
+    abstained = 0
+    for work in work_items:
+        try:
+            result = _consolidate_scope(
+                work.scope_id,
+                scope_level=work.scope_level,
+            )
+            outbox.mark_complete(work.scope_id, generation=work.generation)
+            completed += 1
+            promoted += int(result["promoted_count"])
+            abstained += int(result["abstained_count"])
+        except Exception as exc:
+            outbox.mark_deferred(
+                scope_id=work.scope_id,
+                error_code=type(exc).__name__,
+                attempt_count=work.attempt_count,
+                generation=work.generation,
+            )
+            deferred += 1
+    backlog = outbox.backlog_count()
+    try:
+        emit_memory_metric(
+            event_name="consolidation_retry_drain",
+            consolidation_completed=completed,
+            consolidation_deferred=deferred,
+            promoted=promoted,
+            abstained=abstained,
+            outbox_backlog=backlog,
+        )
+    except Exception:
+        pass
+    return {
+        "status": "COMPLETE",
+        "claimed": len(work_items),
+        "completed": completed,
+        "deferred": deferred,
+        "promoted": promoted,
+        "abstained": abstained,
+        "backlog": backlog,
+    }
 
 
 def _build_agent(
@@ -450,9 +677,13 @@ def _build_agent(
 
 
 def _delete_scope(scope_id: str) -> None:
-    conn = psycopg_connection_factory()()
+    adaptive_conn = _consolidation_connection_factory()()
     try:
-        with conn.cursor() as cur:
+        with adaptive_conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM decision_memory_consolidation_outbox WHERE scope_id = %s",
+                (scope_id,),
+            )
             cur.execute(
                 """
                 DELETE FROM decision_governed_memory_support
@@ -475,6 +706,13 @@ def _delete_scope(scope_id: str) -> None:
                 "DELETE FROM decision_strategy_effectiveness WHERE scope_id = %s",
                 (scope_id,),
             )
+        adaptive_conn.commit()
+    finally:
+        adaptive_conn.close()
+
+    conn = psycopg_connection_factory()()
+    try:
+        with conn.cursor() as cur:
             cur.execute(
                 "DELETE FROM decision_memory_heads WHERE scope_id = %s",
                 (scope_id,),
@@ -509,6 +747,9 @@ def _health() -> dict[str, Any]:
         "status": "ok",
         "memory_backend": "cockroachdb-cloud",
         "database_configured": managed_secret or bool(os.getenv("DATABASE_URL")),
+        "consolidation_database_configured": bool(
+            os.getenv("CONSOLIDATION_DATABASE_URL", "").strip()
+        ),
         "nvidia_advisor_configured": managed_secret
         or bool(os.getenv("NVIDIA_API_KEY")),
         "semantic_embedding_configured": managed_secret
@@ -534,6 +775,10 @@ def _liveness() -> dict[str, Any]:
 def _probe_readiness() -> tuple[int, dict[str, Any]]:
     secret_ok = False
     database_ok = False
+    consolidation_database_ok = False
+    consolidation_identity_isolated = False
+    consolidation_outbox_schema_ok = False
+    memory_scope_control_ok = False
     semantic_embedding_ok = False
     semantic_embedding_revision_ok = False
     nvidia_provider_origin_ok = False
@@ -546,6 +791,7 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
     demo_auth_ok = False
     sandbox_config_ok = False
     configured_embedding_space: str | None = None
+    runtime_database_user: str | None = None
     errors: list[str] = []
 
     try:
@@ -553,6 +799,13 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
         secret_ok = True
     except Exception as exc:
         errors.append(f"secrets:{type(exc).__name__}")
+        try:
+            emit_memory_metric(
+                event_name="secret_refresh_failure",
+                secret_refresh_failure=1,
+            )
+        except Exception:
+            pass
 
     if secret_ok:
         try:
@@ -568,6 +821,12 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
             receipt_signing_ok = True
         except Exception as exc:
             errors.append(f"execution_receipt:{type(exc).__name__}")
+
+        try:
+            _memory_scope_rules()
+            memory_scope_control_ok = True
+        except Exception as exc:
+            errors.append(f"memory_scope_control:{type(exc).__name__}")
 
         demo_auth_ok = bool(os.getenv("DEMO_API_TOKEN", "").strip())
         if not demo_auth_ok:
@@ -587,6 +846,8 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
                 with conn.cursor() as cur:
                     cur.execute("SELECT 1")
                     database_ok = cur.fetchone()[0] == 1
+                    cur.execute("SELECT current_user")
+                    runtime_database_user = str(cur.fetchone()[0])
                     cur.execute(
                         "SELECT semantic_embedding_space, observed_at, recorded_at "
                         "FROM decision_memory_heads LIMIT 0"
@@ -642,6 +903,14 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
                         FROM decision_strategy_effectiveness LIMIT 0
                         """
                     )
+                    cur.execute(
+                        """
+                        SELECT scope_id, scope_level, status, attempt_count, generation,
+                               next_attempt_at, lease_until, last_error_code
+                        FROM decision_memory_consolidation_outbox LIMIT 0
+                        """
+                    )
+                    consolidation_outbox_schema_ok = True
                     adaptive_memory_schema_ok = True
                     cur.execute(
                         """
@@ -711,6 +980,37 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
             errors.append(f"database:{type(exc).__name__}")
 
         try:
+            consolidation_conn = _consolidation_connection_factory()()
+            try:
+                with consolidation_conn.cursor() as cur:
+                    cur.execute("SELECT 1")
+                    consolidation_database_ok = cur.fetchone()[0] == 1
+                    cur.execute("SELECT current_user")
+                    consolidation_user = str(cur.fetchone()[0])
+                    managed = bool(os.getenv("DECISIONVAULT_SECRET_ARN", "").strip())
+                    consolidation_identity_isolated = (
+                        not managed
+                        or (
+                            bool(runtime_database_user)
+                            and consolidation_user != runtime_database_user
+                        )
+                    )
+                    if not consolidation_identity_isolated:
+                        raise RuntimeError(
+                            "runtime and consolidation database identities must differ"
+                        )
+                    cur.execute(
+                        "SELECT scope_id FROM decision_memory_consolidation_outbox LIMIT 0"
+                    )
+                    cur.execute(
+                        "SELECT candidate_id FROM decision_memory_consolidation_candidates LIMIT 0"
+                    )
+            finally:
+                consolidation_conn.close()
+        except Exception as exc:
+            errors.append(f"consolidation_database:{type(exc).__name__}")
+
+        try:
             _embedding_revision()
             semantic_embedding_revision_ok = True
         except Exception as exc:
@@ -747,6 +1047,10 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
         (
             secret_ok,
             database_ok,
+            consolidation_database_ok,
+            consolidation_identity_isolated,
+            consolidation_outbox_schema_ok,
+            memory_scope_control_ok,
             governance_schema_ok,
             adaptive_memory_schema_ok,
             adaptive_memory_current_ok,
@@ -767,6 +1071,10 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
             "status": "ready" if ready else "not_ready",
             "secrets_manager": secret_ok,
             "database": database_ok,
+            "consolidation_database": consolidation_database_ok,
+            "consolidation_identity_isolated": consolidation_identity_isolated,
+            "consolidation_outbox_schema": consolidation_outbox_schema_ok,
+            "memory_scope_control": memory_scope_control_ok,
             "memory_governance_schema": governance_schema_ok,
             "adaptive_memory_schema": adaptive_memory_schema_ok,
             "adaptive_memory_current": adaptive_memory_current_ok,
@@ -821,6 +1129,7 @@ def _decide(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
             decision,
             semantic_embedding_space=_current_semantic_embedding_space(),
         )
+        signing_key_id, signing_secret, _ = _execution_signing_material()
         payload["decision_snapshot"] = issue_decision_snapshot(
             scope_id=scope_id,
             agent_id=agent_id,
@@ -828,7 +1137,8 @@ def _decide(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
             strategy=decision.strategy,
             decision_digest=digest,
             decision_provenance=decision_provenance_payload(decision),
-            signing_secret=_execution_secret(),
+            signing_secret=signing_secret,
+            signing_key_id=signing_key_id,
         )
     else:
         payload["decision_snapshot"] = None
@@ -850,9 +1160,11 @@ def _execute(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
         os.getenv("EXECUTION_SANDBOX_SCENARIO", "stale_payment_token")
     )
     strategy = Strategy(str(body.get("strategy", "")))
+    signing_key_id, signing_secret, verification_secrets = _execution_signing_material()
     snapshot = verify_decision_snapshot(
         body.get("decision_snapshot"),
-        signing_secret=_execution_secret(),
+        signing_secret=signing_secret,
+        verification_secrets=verification_secrets,
         expected_scope_id=scope_id,
         expected_situation=situation,
         expected_strategy=strategy,
@@ -886,7 +1198,8 @@ def _execute(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
         situation=situation,
         strategy=strategy,
         scenario=scenario,
-        signing_secret=_execution_secret(),
+        signing_secret=signing_secret,
+        signing_key_id=signing_key_id,
         decision_snapshot_id=snapshot.snapshot_id,
         decision_digest=snapshot.decision_digest,
         decision_revision=snapshot.decision_revision,
@@ -1123,9 +1436,11 @@ def _record(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
         raise ValueError(
             "direct outcome fields are not accepted; use execution_receipt"
         )
+    _, signing_secret, verification_secrets = _execution_signing_material()
     receipt = verify_execution_receipt(
         body.get("execution_receipt"),
-        signing_secret=_execution_secret(),
+        signing_secret=signing_secret,
+        verification_secrets=verification_secrets,
         expected_scope_id=scope_id,
         expected_agent_id=agent_id,
         ttl_seconds=None,
@@ -1139,7 +1454,8 @@ def _record(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
         return existing
     receipt = verify_execution_receipt(
         body.get("execution_receipt"),
-        signing_secret=_execution_secret(),
+        signing_secret=signing_secret,
+        verification_secrets=verification_secrets,
         expected_scope_id=scope_id,
         expected_agent_id=agent_id,
     )
@@ -1281,6 +1597,19 @@ def _enforce_rate_limit(
 
 def _handle_request(event: dict[str, Any], _context: Any) -> dict[str, Any]:
     try:
+        if (
+            event.get("source") == "aws.events"
+            and event.get("detail-type") == "Scheduled Event"
+        ):
+            _refresh_runtime_security_state()
+            return _json_response(
+                200,
+                {
+                    "service": "decisionvault",
+                    "scheduled": "consolidation-retry",
+                    "result": _drain_consolidation_outbox(),
+                },
+            )
         method = (
             event.get("requestContext", {})
             .get("http", {})
@@ -1301,6 +1630,15 @@ def _handle_request(event: dict[str, Any], _context: Any) -> dict[str, Any]:
         body = _request_body(event)
         if method == "POST":
             _refresh_runtime_security_state()
+        if (
+            method == "POST"
+            and path in {"/decide", "/execute", "/record", "/revoke"}
+            and "memory_scope_level" in body
+        ):
+            return _json_response(
+                400,
+                {"error": "memory_scope_level_is_server_bound"},
+            )
         if method == "POST" and path == "/decide":
             scope_id = _bounded_text(
                 body.get("scope_id"), field="scope_id", maximum_chars=MAX_SCOPE_ID_CHARS
@@ -1444,11 +1782,41 @@ def _response_metric_flags(
     )
 
 
+def _emit_response_memory_metrics(route: str, response: dict[str, Any]) -> None:
+    try:
+        payload = json.loads(response.get("body") or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return
+    if not isinstance(payload, dict):
+        return
+    decision: dict[str, Any]
+    if route == "/demo":
+        candidate = payload.get("memory_on") or {}
+        decision = candidate if isinstance(candidate, dict) else {}
+    elif route == "/governance-demo":
+        candidate = payload.get("decision") or {}
+        decision = candidate if isinstance(candidate, dict) else {}
+    else:
+        decision = payload
+    resolution = str(decision.get("memory_resolution", ""))
+    recalled_memory_ids = decision.get("recalled_memory_ids") or []
+    emit_memory_metric(
+        event_name="decision_memory_resolution",
+        negative_veto=int(resolution.startswith("NEGATIVE_MEMORY_VETO")),
+        cross_layer_conflict=int(resolution == "CROSS_LAYER_CONFLICT_ABSTAIN"),
+        adaptive_hit=int(bool(recalled_memory_ids)),
+    )
+
+
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     started = time.monotonic()
     response = _handle_request(event, context)
     try:
-        route = str(event.get("rawPath", "/")).rstrip("/") or "/"
+        route = (
+            "scheduled-consolidation"
+            if event.get("source") == "aws.events"
+            else (str(event.get("rawPath", "/")).rstrip("/") or "/")
+        )
         influenced, conflict, replay = _response_metric_flags(route, response)
         emit_request_metric(
             route=route,
@@ -1458,6 +1826,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             memory_conflict=conflict,
             idempotent_replay=replay,
         )
+        _emit_response_memory_metrics(route, response)
     except Exception:
         # Observability is non-authoritative and cannot change the API result.
         pass

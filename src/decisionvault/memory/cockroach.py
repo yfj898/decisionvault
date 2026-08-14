@@ -23,6 +23,7 @@ from decisionvault.domain import (
     Strategy,
 )
 from decisionvault.memory.retry import retry_cockroach_serialization
+from decisionvault.memory.outbox import enqueue_consolidation
 from decisionvault.memory.governed_query import (
     adaptive_semantic_ann_sql,
     adaptive_semantic_coverage_sql,
@@ -129,6 +130,7 @@ class CockroachVectorMemoryStore:
     semantic_embedder: Callable[[str], Vector] | None = None
     semantic_query_embedder: Callable[[str], Vector] | None = None
     semantic_embedding_space: str | None = None
+    scope_level_resolver: Callable[[str], MemoryScopeLevel] | None = None
 
     def __post_init__(self) -> None:
         semantic_enabled = (
@@ -139,6 +141,11 @@ class CockroachVectorMemoryStore:
             raise ValueError(
                 "semantic_embedding_space is required for semantic persistence/retrieval"
             )
+
+    def _scope_level(self, scope_id: str) -> MemoryScopeLevel:
+        if self.scope_level_resolver is None:
+            return MemoryScopeLevel.TEAM
+        return self.scope_level_resolver(scope_id)
 
     def save(self, episode: DecisionEpisode) -> None:
         vector = _vector_literal(self.embedder(episode.situation))
@@ -357,6 +364,16 @@ class CockroachVectorMemoryStore:
                             """,
                             (episode.scope_id, semantic_space),
                         )
+                    if (
+                        semantic_vector is not None
+                        and producer_agent_id
+                        and incoming_is_newest
+                    ):
+                        enqueue_consolidation(
+                            cur,
+                            scope_id=episode.scope_id,
+                            scope_level=self._scope_level(episode.scope_id),
+                        )
                 conn.commit()
             except Exception:
                 rollback = getattr(conn, "rollback", None)
@@ -452,6 +469,11 @@ class CockroachVectorMemoryStore:
                             episode_id,
                         ),
                     )
+                    enqueue_consolidation(
+                        cur,
+                        scope_id=scope_id,
+                        scope_level=self._scope_level(scope_id),
+                    )
                 conn.commit()
                 return MemoryRevocationResult(
                     revocation_id=revocation_id,
@@ -538,6 +560,11 @@ class CockroachVectorMemoryStore:
                                 scope_id,
                                 episode_id,
                             ),
+                        )
+                        enqueue_consolidation(
+                            cur,
+                            scope_id=str(scope_id),
+                            scope_level=self._scope_level(str(scope_id)),
                         )
                         retired += 1
                         retired_producers.append(producer)

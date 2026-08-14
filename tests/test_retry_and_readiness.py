@@ -153,6 +153,10 @@ def test_readiness_checks_secret_database_and_embedding(monkeypatch):
     assert status == 200
     assert payload["status"] == "ready"
     assert payload["database"] is True
+    assert payload["consolidation_database"] is True
+    assert payload["consolidation_identity_isolated"] is True
+    assert payload["consolidation_outbox_schema"] is True
+    assert payload["memory_scope_control"] is True
     assert payload["semantic_embedding"] is True
     assert payload["semantic_embedding_revision"] is True
     assert payload["semantic_head_space_current"] is True

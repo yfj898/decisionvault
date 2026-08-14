@@ -40,14 +40,26 @@ Hosted Lambda environment variables:
   warm Lambda processes; managed secret values replace stale process values
 - `SECURITY_RECONCILE_SECONDS=30` — interval for reconciling current memory heads
   against the active authenticated producer set
+- `DEFAULT_MEMORY_SCOPE_LEVEL=TEAM` — server-owned adaptive-memory scope level;
+  `PRIVATE`, `TEAM`, and `GLOBAL` require 1, 2, and 3 distinct producers
+- `MEMORY_SCOPE_LEVELS_JSON` — optional namespace-prefix map to server-owned
+  `PRIVATE` / `TEAM` / `GLOBAL` levels; longest namespace-bound prefix wins
+- `CONSOLIDATION_LEASE_SECONDS=120` — durable outbox worker lease
+- `CONSOLIDATION_RETRY_BATCH_SIZE=10` — scheduled retry batch size, capped by
+  the application at 50 scopes
 - `REVOKE_AGENT_IDS` — comma-separated server-bound agent IDs allowed to invoke
   revocation after normal token/scope capability checks; contains no raw token
 - `EXECUTION_SANDBOX_SCENARIO=stale_payment_token` — non-secret server-owned
   sandbox fixture; general `/execute` callers cannot override it
 
 The referenced secret stores `DATABASE_URL`, `NVIDIA_API_KEY`, `DEMO_API_TOKEN`,
-`AGENT_AUTH_JSON`, and `EXECUTION_RECEIPT_SECRET`. The Lambda execution role is
-granted `secretsmanager:GetSecretValue` only on that secret ARN.
+`AGENT_AUTH_JSON`, and `EXECUTION_RECEIPT_SECRET`. Governed Adaptive Memory v7
+also accepts `CONSOLIDATION_DATABASE_URL` for a distinct CockroachDB
+consolidator identity and `EXECUTION_RECEIPT_KEYRING_JSON` for versioned signing
+keys with retained verification-only history. Managed readiness fails closed if
+the consolidator credential is absent or resolves to the same database identity
+as request runtime. The Lambda execution role is granted
+`secretsmanager:GetSecretValue` only on that secret ARN.
 
 Do not put any credential in source control. Local ignored deployment files may
 hold bootstrap copies, but the hosted function resolves sensitive values from
@@ -84,7 +96,9 @@ and `executable=false`.
 `GET /health/ready` is fail-closed for the security control plane as well as
 CockroachDB/NVIDIA dependencies. A ready response requires parseable non-empty
 agent grants, a valid execution receipt signing secret, a non-empty demo token,
-and a valid server-owned execution sandbox scenario.
+and a valid server-owned execution sandbox scenario. Managed v7 additionally
+requires the consolidation outbox schema, valid memory-scope configuration, a
+working consolidator connection, and distinct runtime/consolidator DB identities.
 
 The general `/decide` route always runs with memory governance enabled and
 rejects a caller-supplied `memory_enabled` override. Memory OFF exists only in
@@ -120,6 +134,45 @@ This writes `dist/decisionvault-lambda.zip`. Lambda dependencies are exactly
 pinned. The public CockroachDB CA is an explicit build input; a missing/non-PEM
 CA or any CA input containing private-key material fails the build before a ZIP
 is produced. The `dist/` directory is ignored by Git.
+
+## Governed Adaptive Memory v7 rollout
+
+Use an expand/contract migration so the old Lambda never loses adaptive write
+rights before the new Lambda has switched to the consolidator identity:
+
+```bash
+python scripts/apply_governed_adaptive_memory_v7.py \
+  --phase expand \
+  --database-url-file /path/to/admin-database-url \
+  --ca-file /path/to/cockroach-cloud-root.crt
+
+# Update the existing managed secret with the consolidator credential and
+# signing keyring, deploy v7, then require /health/ready to pass.
+
+python scripts/apply_governed_adaptive_memory_v7.py \
+  --phase contract \
+  --database-url-file /path/to/admin-database-url \
+  --ca-file /path/to/cockroach-cloud-root.crt
+```
+
+The contract phase removes candidate/L2/support mutation from
+`decisionvault_runtime` and removes L3 INSERT/DELETE. L3 UPDATE remains only for
+the synchronous correctness boundary that invalidates governed memory when a
+supporting current head is replaced, revoked, or retired. Runtime can enqueue a
+durable consolidation obligation but cannot delete it.
+
+After the cutover, configure periodic retry and memory-health operations:
+
+```bash
+python scripts/configure_memory_operations.py \
+  --function-name decisionvault-agent \
+  --region ap-northeast-1 \
+  --schedule-minutes 5
+```
+
+This provisions an EventBridge retry schedule, CloudWatch alarms for deferred
+consolidation / secret-refresh failure / backlog growth, and a low-cardinality
+memory-operations dashboard.
 
 ## Competition proof
 

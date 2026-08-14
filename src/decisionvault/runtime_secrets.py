@@ -15,6 +15,12 @@ SECRET_KEYS = frozenset(
         "EXECUTION_RECEIPT_SECRET",
     }
 )
+OPTIONAL_SECRET_KEYS = frozenset(
+    {
+        "EXECUTION_RECEIPT_KEYRING_JSON",
+        "CONSOLIDATION_DATABASE_URL",
+    }
+)
 
 
 _SECRET_CACHE: dict[str, str] | None = None
@@ -72,7 +78,7 @@ def _load_runtime_secrets_locked(*, force: bool = False) -> dict[str, str]:
         raise RuntimeError("DecisionVault runtime secret must be a JSON object")
 
     values: dict[str, str] = {}
-    for key in SECRET_KEYS:
+    for key in SECRET_KEYS | OPTIONAL_SECRET_KEYS:
         value = payload.get(key)
         if value is not None:
             values[key] = str(value)
@@ -101,6 +107,9 @@ def hydrate_runtime_secrets(*, force: bool = False) -> None:
     with _SECRET_LOCK:
         managed = bool(os.getenv("DECISIONVAULT_SECRET_ARN", "").strip())
         values = _load_runtime_secrets_locked(force=force)
+        if managed:
+            for key in OPTIONAL_SECRET_KEYS - values.keys():
+                os.environ.pop(key, None)
         for key, value in values.items():
             if managed:
                 os.environ[key] = value
