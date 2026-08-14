@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import time
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -51,6 +52,7 @@ SECURITY_HEADERS = {
         "img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'"
     ),
 }
+_READINESS_CACHE: tuple[float, tuple[int, dict[str, Any]]] | None = None
 
 
 class SupersessionConflict(Exception):
@@ -243,6 +245,79 @@ def _health() -> dict[str, Any]:
         ),
         "runtime_secret_reference_configured": managed_secret,
     }
+
+
+def _liveness() -> dict[str, Any]:
+    return {"service": "decisionvault", "status": "live"}
+
+
+def _probe_readiness() -> tuple[int, dict[str, Any]]:
+    secret_ok = False
+    database_ok = False
+    semantic_embedding_ok = False
+    errors: list[str] = []
+
+    try:
+        hydrate_runtime_secrets()
+        secret_ok = True
+    except Exception as exc:
+        errors.append(f"secrets:{type(exc).__name__}")
+
+    if secret_ok:
+        try:
+            conn = psycopg_connection_factory()()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT 1")
+                    database_ok = cur.fetchone()[0] == 1
+            finally:
+                conn.close()
+        except Exception as exc:
+            errors.append(f"database:{type(exc).__name__}")
+
+        try:
+            semantic = NvidiaSemanticEmbedder(
+                api_key=os.getenv("NVIDIA_API_KEY", "").strip(),
+                model_id=os.getenv(
+                    "NVIDIA_EMBED_MODEL_ID", "nvidia/nv-embedqa-e5-v5"
+                ),
+                base_url=os.getenv(
+                    "NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"
+                ),
+                timeout_seconds=min(
+                    8.0, float(os.getenv("NVIDIA_TIMEOUT_SECONDS", "20"))
+                ),
+            )
+            semantic_embedding_ok = (
+                len(semantic.embed_query("DecisionVault readiness probe")) == 1024
+            )
+        except Exception as exc:
+            errors.append(f"semantic_embedding:{type(exc).__name__}")
+
+    ready = secret_ok and database_ok and semantic_embedding_ok
+    return (
+        200 if ready else 503,
+        {
+            "service": "decisionvault",
+            "status": "ready" if ready else "not_ready",
+            "secrets_manager": secret_ok,
+            "database": database_ok,
+            "semantic_embedding": semantic_embedding_ok,
+            "advisor_required_for_readiness": False,
+            "errors": errors,
+        },
+    )
+
+
+def _readiness() -> tuple[int, dict[str, Any]]:
+    global _READINESS_CACHE
+    now = time.monotonic()
+    ttl = max(1.0, float(os.getenv("READINESS_CACHE_SECONDS", "30")))
+    if _READINESS_CACHE is not None and now - _READINESS_CACHE[0] < ttl:
+        return _READINESS_CACHE[1]
+    result = _probe_readiness()
+    _READINESS_CACHE = (now, result)
+    return result
 
 
 def _decide(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
@@ -558,6 +633,11 @@ def lambda_handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
             return _html_response(INDEX_HTML)
         if method == "GET" and path == "/health":
             return _json_response(200, _health())
+        if method == "GET" and path == "/health/live":
+            return _json_response(200, _liveness())
+        if method == "GET" and path == "/health/ready":
+            status_code, payload = _readiness()
+            return _json_response(status_code, payload)
 
         if method == "POST":
             hydrate_runtime_secrets()

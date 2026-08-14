@@ -26,6 +26,9 @@ Hosted Lambda environment variables:
 - `NVIDIA_EMBED_MODEL_ID=nvidia/nv-embedqa-e5-v5`
 - `NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1`
 - `NVIDIA_TIMEOUT_SECONDS`
+- `DATABASE_CONNECT_TIMEOUT_SECONDS=5`
+- `DATABASE_STATEMENT_TIMEOUT_MS=8000`
+- `READINESS_CACHE_SECONDS=30`
 
 The referenced secret stores `DATABASE_URL`, `NVIDIA_API_KEY`, `DEMO_API_TOKEN`,
 `AGENT_AUTH_JSON`, and `EXECUTION_RECEIPT_SECRET`. The Lambda execution role is
@@ -39,6 +42,8 @@ Secrets Manager at runtime.
 
 - `GET /` — public judge UI
 - `GET /health`
+- `GET /health/live` — process liveness only
+- `GET /health/ready` — active Secrets Manager + CockroachDB + E5-v5 readiness
 - `POST /execute` — agent-token authenticated sandbox execution; returns a signed
   receipt
 - `POST /record` — agent-token authenticated outcome recording

@@ -446,6 +446,13 @@ than directly in Lambda environment variables. The Lambda execution role can
 read only the single DecisionVault runtime secret; the function environment
 contains the secret ARN plus non-sensitive model/runtime settings.
 
+CockroachDB connections use bounded connect/statement timeouts, and the memory
+store retries a complete transaction on CockroachDB SQLSTATE `40001` without
+repeating the external embedding call. `/health/live` exposes dependency-free
+liveness; `/health/ready` actively probes Secrets Manager, CockroachDB, and the
+production E5-v5 embedding endpoint and caches the result for 30 seconds per warm
+Lambda process.
+
 Never commit:
 
 - CockroachDB connection strings

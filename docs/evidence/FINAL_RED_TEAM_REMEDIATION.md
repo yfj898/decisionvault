@@ -283,8 +283,6 @@ fully solved:
   than cryptographically/transactionally bound to an execution receipt;
 - the token-grant layer is a compact hackathon authorization mechanism, not
   enterprise IAM;
-- `/health` primarily reports configuration/liveness and is not yet a full
-  CockroachDB + NVIDIA readiness probe;
 - large-scale concurrent writer, retry, rate-limit, and load evidence remains a
   future production-hardening task.
 

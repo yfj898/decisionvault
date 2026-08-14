@@ -11,6 +11,7 @@ from decisionvault.domain import (
     RecalledEpisode,
     Strategy,
 )
+from decisionvault.memory.retry import retry_cockroach_serialization
 
 
 Vector = Sequence[float]
@@ -105,54 +106,62 @@ class CockroachVectorMemoryStore:
                 semantic_vector,
                 episode.created_at,
             )
-        conn = self.connection_factory()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(sql, params)
-                producer_agent_id = str(
-                    episode.evidence.get("producer_agent_id", "")
-                ).strip()
-                if semantic_vector is not None and producer_agent_id:
-                    if supersedes_episode_id:
+        def write_transaction() -> None:
+            conn = self.connection_factory()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(sql, params)
+                    producer_agent_id = str(
+                        episode.evidence.get("producer_agent_id", "")
+                    ).strip()
+                    if semantic_vector is not None and producer_agent_id:
+                        if supersedes_episode_id:
+                            cur.execute(
+                                """
+                                DELETE FROM decision_memory_heads
+                                WHERE scope_id = %s AND episode_id = %s::UUID
+                                """,
+                                (episode.scope_id, supersedes_episode_id),
+                            )
                         cur.execute(
                             """
-                            DELETE FROM decision_memory_heads
-                            WHERE scope_id = %s AND episode_id = %s::UUID
+                            UPSERT INTO decision_memory_heads (
+                                scope_id, producer_agent_id, strategy, episode_id,
+                                situation, outcome, effectiveness, confidence,
+                                evidence, execution_receipt_id, supersedes_episode_id,
+                                semantic_embedding, created_at
+                            ) VALUES (
+                                %s, %s, %s, %s::UUID,
+                                %s, %s, %s, %s,
+                                %s::JSONB, %s, %s::UUID, %s::VECTOR, %s
+                            )
                             """,
-                            (episode.scope_id, supersedes_episode_id),
+                            (
+                                episode.scope_id,
+                                producer_agent_id,
+                                episode.strategy.value,
+                                episode.episode_id,
+                                episode.situation,
+                                episode.outcome.value,
+                                episode.effectiveness,
+                                episode.confidence,
+                                json.dumps(dict(episode.evidence)),
+                                execution_receipt_id,
+                                supersedes_episode_id,
+                                semantic_vector,
+                                episode.created_at,
+                            ),
                         )
-                    cur.execute(
-                        """
-                        UPSERT INTO decision_memory_heads (
-                            scope_id, producer_agent_id, strategy, episode_id,
-                            situation, outcome, effectiveness, confidence,
-                            evidence, execution_receipt_id, supersedes_episode_id,
-                            semantic_embedding, created_at
-                        ) VALUES (
-                            %s, %s, %s, %s::UUID,
-                            %s, %s, %s, %s,
-                            %s::JSONB, %s, %s::UUID, %s::VECTOR, %s
-                        )
-                        """,
-                        (
-                            episode.scope_id,
-                            producer_agent_id,
-                            episode.strategy.value,
-                            episode.episode_id,
-                            episode.situation,
-                            episode.outcome.value,
-                            episode.effectiveness,
-                            episode.confidence,
-                            json.dumps(dict(episode.evidence)),
-                            execution_receipt_id,
-                            supersedes_episode_id,
-                            semantic_vector,
-                            episode.created_at,
-                        ),
-                    )
-            conn.commit()
-        finally:
-            conn.close()
+                conn.commit()
+            except Exception:
+                rollback = getattr(conn, "rollback", None)
+                if callable(rollback):
+                    rollback()
+                raise
+            finally:
+                conn.close()
+
+        retry_cockroach_serialization(write_transaction)
 
     def recall(
         self,
@@ -200,13 +209,21 @@ class CockroachVectorMemoryStore:
                 ORDER BY embedding <=> %s::VECTOR
                 LIMIT %s
             """
-        conn = self.connection_factory()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(sql, (vector, scope_id, vector, limit))
-                rows = cur.fetchall()
-        finally:
-            conn.close()
+        def read_transaction():
+            conn = self.connection_factory()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(sql, (vector, scope_id, vector, limit))
+                    return cur.fetchall()
+            except Exception:
+                rollback = getattr(conn, "rollback", None)
+                if callable(rollback):
+                    rollback()
+                raise
+            finally:
+                conn.close()
+
+        rows = retry_cockroach_serialization(read_transaction)
 
         recalled: list[RecalledEpisode] = []
         for row in rows:

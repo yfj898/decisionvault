@@ -1,0 +1,135 @@
+from __future__ import annotations
+
+import sys
+import types
+
+import decisionvault.aws_lambda as aws_lambda
+from decisionvault.memory.connection import psycopg_connection_factory
+from decisionvault.memory.retry import retry_cockroach_serialization
+
+
+class RetryableError(Exception):
+    sqlstate = "40001"
+
+
+def test_serialization_retry_retries_complete_operation():
+    calls = []
+
+    def operation():
+        calls.append(len(calls) + 1)
+        if len(calls) < 3:
+            raise RetryableError()
+        return "ok"
+
+    sleeps = []
+    assert retry_cockroach_serialization(
+        operation,
+        sleep=sleeps.append,
+    ) == "ok"
+    assert calls == [1, 2, 3]
+    assert sleeps == [0.02, 0.04]
+
+
+def test_non_serialization_error_is_not_retried():
+    calls = []
+
+    def operation():
+        calls.append(1)
+        raise RuntimeError("no retry")
+
+    try:
+        retry_cockroach_serialization(operation, sleep=lambda _: None)
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("expected RuntimeError")
+    assert len(calls) == 1
+
+
+def test_connection_factory_applies_connection_and_statement_timeouts(monkeypatch):
+    calls = []
+
+    def connect(url, **kwargs):
+        calls.append((url, kwargs))
+        return object()
+
+    monkeypatch.setitem(sys.modules, "psycopg", types.SimpleNamespace(connect=connect))
+    factory = psycopg_connection_factory(
+        "postgresql://placeholder.invalid/db",
+        connect_timeout_seconds=4,
+        statement_timeout_ms=7000,
+    )
+    factory()
+    assert calls[0][1]["connect_timeout"] == 4
+    assert calls[0][1]["options"] == "-c statement_timeout=7000"
+
+
+class ReadyCursor:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def execute(self, _sql):
+        pass
+
+    def fetchone(self):
+        return (1,)
+
+
+class ReadyConnection:
+    def cursor(self):
+        return ReadyCursor()
+
+    def close(self):
+        pass
+
+
+class ReadyEmbedder:
+    def __init__(self, **_kwargs):
+        pass
+
+    def embed_query(self, _text):
+        return [0.0] * 1024
+
+
+def test_readiness_checks_secret_database_and_embedding(monkeypatch):
+    aws_lambda._READINESS_CACHE = None
+    monkeypatch.setattr(aws_lambda, "hydrate_runtime_secrets", lambda: None)
+    monkeypatch.setattr(
+        aws_lambda,
+        "psycopg_connection_factory",
+        lambda: (lambda: ReadyConnection()),
+    )
+    monkeypatch.setattr(aws_lambda, "NvidiaSemanticEmbedder", ReadyEmbedder)
+    monkeypatch.setenv("NVIDIA_API_KEY", "test")
+
+    status, payload = aws_lambda._readiness()
+
+    assert status == 200
+    assert payload["status"] == "ready"
+    assert payload["database"] is True
+    assert payload["semantic_embedding"] is True
+    assert payload["advisor_required_for_readiness"] is False
+
+
+def test_readiness_cache_avoids_repeated_external_probe(monkeypatch):
+    aws_lambda._READINESS_CACHE = None
+    calls = []
+    monkeypatch.setenv("READINESS_CACHE_SECONDS", "30")
+    monkeypatch.setattr(
+        aws_lambda,
+        "_probe_readiness",
+        lambda: (calls.append(1) or (200, {"status": "ready"})),
+    )
+    assert aws_lambda._readiness()[0] == 200
+    assert aws_lambda._readiness()[0] == 200
+    assert calls == [1]
+
+
+def test_liveness_has_no_dependency_contract():
+    assert aws_lambda._liveness() == {
+        "service": "decisionvault",
+        "status": "live",
+    }

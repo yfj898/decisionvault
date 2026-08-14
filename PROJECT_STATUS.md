@@ -15,7 +15,7 @@ Baseline:
 8 tests PASS
 
 Current local verification:
-66 tests PASS
+72 tests PASS
 CockroachDB Cloud persistence smoke: PASS
 Fresh-process recall changed agent behavior: PASS
 Memory-off causal baseline: PASS
@@ -154,3 +154,12 @@ Secrets Manager `/demo` regression: PASS
 Secrets Manager `/governance-demo` regression: PASS
 Secrets Manager verified execution/record/decision regression: PASS
 Secrets Manager temporary rows cleanup: 0 rows
+CockroachDB connect timeout: 5s PASS
+CockroachDB statement timeout: 8000ms PASS
+Real CockroachDB SQLSTATE 40001 retry: PASS (2 attempts)
+`/health/live`: HTTP 200 PASS
+`/health/ready`: HTTP 200 PASS
+Readiness Secrets Manager probe: PASS
+Readiness CockroachDB probe: PASS
+Readiness E5-v5 probe: PASS
+Readiness warm-cache regression: PASS
