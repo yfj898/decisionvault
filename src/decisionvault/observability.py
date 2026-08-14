@@ -67,6 +67,10 @@ def emit_memory_metric(
     quality_outcome_observed: int = 0,
     quality_decision_write_failure: int = 0,
     quality_outcome_write_failure: int = 0,
+    quality_calibration_run: int = 0,
+    quality_calibration_samples: int = 0,
+    quality_calibration_recommendation: int = 0,
+    quality_calibration_failure: int = 0,
 ) -> None:
     """Emit fixed-name, low-cardinality memory-health metrics.
 
@@ -90,6 +94,12 @@ def emit_memory_metric(
         "MemoryQualityOutcomeObservedCount": int(quality_outcome_observed),
         "MemoryQualityDecisionWriteFailureCount": int(quality_decision_write_failure),
         "MemoryQualityOutcomeWriteFailureCount": int(quality_outcome_write_failure),
+        "MemoryQualityCalibrationRunCount": int(quality_calibration_run),
+        "MemoryQualityCalibrationObservedSamples": int(quality_calibration_samples),
+        "MemoryQualityCalibrationRecommendationCount": int(
+            quality_calibration_recommendation
+        ),
+        "MemoryQualityCalibrationFailureCount": int(quality_calibration_failure),
     }
     event: dict[str, Any] = {
         "_aws": {

@@ -75,6 +75,20 @@ def alarm_definitions(*, function_name: str) -> tuple[dict[str, Any], ...]:
                 }
             ],
         },
+        {
+            **common,
+            "AlarmName": f"{function_name}-memory-quality-calibration-failure",
+            "MetricName": "MemoryQualityCalibrationFailureCount",
+            "Statistic": "Sum",
+            "Threshold": 1.0,
+            "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+            "Dimensions": [
+                {
+                    "Name": "MemoryEvent",
+                    "Value": "memory_quality_calibration_failure",
+                }
+            ],
+        },
     )
 
 
@@ -322,6 +336,50 @@ def dashboard_body(*, function_name: str, region: str) -> str:
                                 ),
                                 "label": "Outcome write failures",
                                 "id": "quality_outcome_failures",
+                            }
+                        ],
+                        [
+                            {
+                                "expression": (
+                                    "SEARCH('{DecisionVault,MemoryEvent} "
+                                    "MetricName=\"MemoryQualityCalibrationRunCount\"', "
+                                    "'Sum', 300)"
+                                ),
+                                "label": "Calibration runs",
+                                "id": "quality_calibration_runs",
+                            }
+                        ],
+                        [
+                            {
+                                "expression": (
+                                    "SEARCH('{DecisionVault,MemoryEvent} "
+                                    "MetricName=\"MemoryQualityCalibrationObservedSamples\"', "
+                                    "'Maximum', 300)"
+                                ),
+                                "label": "Memory-exposed labeled samples",
+                                "id": "quality_calibration_samples",
+                            }
+                        ],
+                        [
+                            {
+                                "expression": (
+                                    "SEARCH('{DecisionVault,MemoryEvent} "
+                                    "MetricName=\"MemoryQualityCalibrationRecommendationCount\"', "
+                                    "'Sum', 300)"
+                                ),
+                                "label": "Shadow recommendations",
+                                "id": "quality_calibration_recommendations",
+                            }
+                        ],
+                        [
+                            {
+                                "expression": (
+                                    "SEARCH('{DecisionVault,MemoryEvent} "
+                                    "MetricName=\"MemoryQualityCalibrationFailureCount\"', "
+                                    "'Sum', 300)"
+                                ),
+                                "label": "Calibration failures",
+                                "id": "quality_calibration_failures",
                             }
                         ],
                     ],

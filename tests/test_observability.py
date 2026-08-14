@@ -38,17 +38,22 @@ def test_memory_health_metric_is_alarm_ready_and_contains_no_scope_identity(caps
         consolidation_deferred=1,
         outbox_backlog=3,
         cross_layer_conflict=1,
+        quality_calibration_run=1,
+        quality_calibration_samples=17,
     )
     payload = json.loads(capsys.readouterr().out)
     assert payload["MemoryEvent"] == "consolidation_deferred"
     assert payload["ConsolidationDeferredCount"] == 1
     assert payload["ConsolidationOutboxBacklog"] == 3
     assert payload["CrossLayerConflictCount"] == 1
+    assert payload["MemoryQualityCalibrationRunCount"] == 1
+    assert payload["MemoryQualityCalibrationObservedSamples"] == 17
     metrics = payload["_aws"]["CloudWatchMetrics"][0]["Metrics"]
     assert {item["Name"] for item in metrics} >= {
         "ConsolidationDeferredCount",
         "ConsolidationOutboxBacklog",
         "SecretRefreshFailureCount",
+        "MemoryQualityCalibrationFailureCount",
     }
     serialized = json.dumps(payload)
     for forbidden in ("scope_id", "agent_id", "episode_id", "situation", "token"):

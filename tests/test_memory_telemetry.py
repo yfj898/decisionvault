@@ -7,9 +7,12 @@ from decisionvault.agent.policy import OutcomeAwarePolicy
 from decisionvault.domain import Decision, Outcome, Strategy
 from decisionvault.memory_telemetry import (
     build_memory_quality_telemetry,
+    calibration_is_due,
     calibrate_from_telemetry_rows,
     monotone_shadow_profiles,
     production_threshold_profile,
+    run_persisted_calibration,
+    threshold_profile_catalog,
 )
 
 
@@ -38,6 +41,15 @@ def test_shadow_profiles_are_never_looser_than_the_champion():
             >= champion.adaptive_minimum_effective_confidence
         )
         assert profile.adaptive_conflict_margin >= champion.adaptive_conflict_margin
+
+
+def test_threshold_profile_catalog_contains_champion_and_all_shadows():
+    catalog = threshold_profile_catalog()
+    assert catalog["champion"].name == "champion"
+    assert set(catalog) == {
+        "champion",
+        *(profile.name for profile in monotone_shadow_profiles(OutcomeAwarePolicy())),
+    }
 
 
 def test_real_telemetry_requires_a_minimum_sample_floor():
@@ -172,3 +184,113 @@ def test_quality_features_contain_no_raw_scope_situation_or_identity():
         "token",
     ):
         assert forbidden not in serialized
+
+
+class _TelemetryCursor:
+    def __init__(self, rows=()):
+        self.rows = list(rows)
+        self.executions = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def execute(self, sql, params=None):
+        self.executions.append((sql, params))
+
+    def fetchall(self):
+        return self.rows
+
+    def fetchone(self):
+        return self.rows[0] if self.rows else None
+
+
+class _TelemetryConnection:
+    def __init__(self, rows=()):
+        self.cursor_value = _TelemetryCursor(rows)
+        self.committed = False
+        self.closed = False
+
+    def cursor(self):
+        return self.cursor_value
+
+    def commit(self):
+        self.committed = True
+
+    def rollback(self):
+        self.committed = False
+
+    def close(self):
+        self.closed = True
+
+
+def test_persisted_calibration_is_aggregate_append_only_and_keeps_champion_below_floor():
+    now = datetime.now(timezone.utc)
+    shadow = {
+        "profile": {"name": "adaptive_effective_confidence_0_35"},
+        "same_strategy_as_champion": True,
+        "executable": True,
+    }
+    rows = [
+        (
+            "AGENT_API",
+            now,
+            "TEAM",
+            "REFRESH_PAYMENT_TOKEN",
+            True,
+            True,
+            "GOVERNED_MEMORY",
+            False,
+            {
+                "episodic": {"candidate_count": 1},
+                "adaptive": {"candidate_count": 0},
+                "shadows": [shadow],
+            },
+            "SUCCESS",
+            0.95,
+            1.0,
+            now,
+            now,
+        )
+    ]
+    read_conn = _TelemetryConnection(rows)
+    write_conn = _TelemetryConnection()
+    connections = [read_conn, write_conn]
+
+    run = run_persisted_calibration(
+        connection_factory=lambda: connections.pop(0),
+        minimum_samples=30,
+    )
+
+    assert run.summary.observed_samples == 1
+    assert run.summary.recommendation == "INSUFFICIENT_REAL_TELEMETRY"
+    assert write_conn.committed is True
+    insert_sql, insert_params = write_conn.cursor_value.executions[0]
+    assert "INSERT INTO decision_memory_quality_calibration_runs" in insert_sql
+    serialized = json.dumps(insert_params, default=str)
+    for forbidden in (
+        "scope_id",
+        "agent_id",
+        "producer_agent_id",
+        "episode_id",
+        "memory_id",
+        "situation",
+    ):
+        assert forbidden not in serialized
+
+
+def test_calibration_due_uses_persisted_run_as_durable_24h_throttle():
+    now = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
+    never = _TelemetryConnection()
+    recent = _TelemetryConnection(
+        [(datetime(2026, 8, 14, 1, 0, tzinfo=timezone.utc),)]
+    )
+    stale = _TelemetryConnection(
+        [(datetime(2026, 8, 13, 11, 0, tzinfo=timezone.utc),)]
+    )
+
+    assert calibration_is_due(connection_factory=lambda: never, now=now)
+    assert not calibration_is_due(connection_factory=lambda: recent, now=now)
+    assert calibration_is_due(connection_factory=lambda: stale, now=now)

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 from statistics import fmean
 from typing import Any, Callable, Iterable, Mapping
+from uuid import uuid4
 
 from decisionvault.adaptive_memory import (
     GovernedAdaptiveMemoryResolver,
@@ -17,6 +18,11 @@ from decisionvault.domain import Decision, Outcome, RecalledEpisode, Strategy
 
 MEMORY_QUALITY_TELEMETRY_REVISION = "memory-quality-telemetry-v1"
 MEMORY_QUALITY_CALIBRATION_REVISION = "telemetry-calibration-v1"
+DEFAULT_CALIBRATION_LOOKBACK_DAYS = 90
+DEFAULT_CALIBRATION_MINIMUM_SAMPLES = 30
+DEFAULT_CALIBRATION_MINIMUM_SUCCESS_RETENTION = 0.95
+DEFAULT_CALIBRATION_MAXIMUM_HARMFUL_RATE = 0.05
+DEFAULT_CALIBRATION_INTERVAL_HOURS = 24
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +88,14 @@ def monotone_shadow_profiles(policy: OutcomeAwarePolicy) -> tuple[ShadowThreshol
         payload[field_name] = value
         profiles.append(ShadowThresholdProfile(**payload))
     return tuple(profiles)
+
+
+def threshold_profile_catalog(
+    policy: OutcomeAwarePolicy | None = None,
+) -> dict[str, ShadowThresholdProfile]:
+    resolved = policy or OutcomeAwarePolicy()
+    profiles = (production_threshold_profile(resolved), *monotone_shadow_profiles(resolved))
+    return {profile.name: profile for profile in profiles}
 
 
 def _age_days(observed_at: datetime, *, now: datetime) -> float:
@@ -327,6 +341,16 @@ class TelemetryCalibrationSummary:
     challengers: tuple[Mapping[str, Any], ...]
 
 
+@dataclass(frozen=True, slots=True)
+class PersistedCalibrationRun:
+    run_id: str
+    source: str
+    decision_rows: int
+    labeled_outcomes: int
+    summary: TelemetryCalibrationSummary
+    generated_at: datetime
+
+
 def _qualified_success(outcome: str, effectiveness: float) -> bool:
     return outcome == Outcome.SUCCESS.value and effectiveness >= 0.7
 
@@ -473,3 +497,219 @@ def calibrate_from_telemetry_rows(
         recommended_profile=recommended,
         challengers=tuple(challenger_results),
     )
+
+
+def load_calibration_rows(
+    *,
+    connection_factory: Callable[[], object],
+    source: str = "AGENT_API",
+    lookback_days: int = DEFAULT_CALIBRATION_LOOKBACK_DAYS,
+) -> list[dict[str, Any]]:
+    """Read de-identified decision/outcome telemetry for offline calibration.
+
+    The result deliberately excludes decision snapshot IDs and execution receipt
+    IDs because neither is needed by the threshold evaluator. This keeps the
+    calibration boundary aggregate/feature-only even though those identifiers
+    exist as internal database join keys.
+    """
+
+    if lookback_days <= 0:
+        raise ValueError("lookback_days must be positive")
+    conn = connection_factory()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT d.source, d.decided_at, d.scope_level, d.selected_strategy,
+                       d.executable, d.memory_influenced, d.memory_resolution,
+                       d.memory_conflict, d.quality_features,
+                       o.outcome, o.effectiveness, o.confidence,
+                       o.observed_at, o.recorded_at
+                FROM decision_memory_quality_decisions d
+                LEFT JOIN decision_memory_quality_outcomes o
+                  ON o.decision_snapshot_id = d.decision_snapshot_id
+                WHERE d.source = %s
+                  AND d.decided_at >= now() - (%s * INTERVAL '1 day')
+                ORDER BY d.decided_at
+                """,
+                (source, int(lookback_days)),
+            )
+            result: list[dict[str, Any]] = []
+            for row in cur.fetchall():
+                quality_features = row[8] or {}
+                if isinstance(quality_features, str):
+                    try:
+                        quality_features = json.loads(quality_features)
+                    except json.JSONDecodeError:
+                        quality_features = {}
+                result.append(
+                    {
+                        "source": str(row[0]),
+                        "decided_at": row[1].isoformat(),
+                        "scope_level": str(row[2]),
+                        "selected_strategy": str(row[3]) if row[3] is not None else None,
+                        "executable": bool(row[4]),
+                        "memory_influenced": bool(row[5]),
+                        "memory_resolution": str(row[6]),
+                        "memory_conflict": bool(row[7]),
+                        "quality_features": quality_features,
+                        "outcome": str(row[9]) if row[9] is not None else None,
+                        "effectiveness": float(row[10]) if row[10] is not None else None,
+                        "confidence": float(row[11]) if row[11] is not None else None,
+                        "observed_at": row[12].isoformat() if row[12] is not None else None,
+                        "recorded_at": row[13].isoformat() if row[13] is not None else None,
+                    }
+                )
+            return result
+    finally:
+        conn.close()
+
+
+def insert_calibration_run(
+    *,
+    connection_factory: Callable[[], object],
+    summary: TelemetryCalibrationSummary,
+    decision_rows: int,
+    labeled_outcomes: int,
+    lookback_days: int,
+    minimum_samples: int,
+    minimum_success_retention: float,
+    maximum_harmful_rate: float,
+    generated_at: datetime | None = None,
+) -> PersistedCalibrationRun:
+    """Append one aggregate champion/challenger evaluation artifact.
+
+    Calibration runs are intentionally immutable. They carry only aggregate
+    counts and challenger summaries; no scope, agent, situation, episode,
+    memory, snapshot, or receipt identifier is persisted in this table.
+    """
+
+    at = (generated_at or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    run_id = str(uuid4())
+    conn = connection_factory()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO decision_memory_quality_calibration_runs (
+                    run_id, source, calibration_revision, lookback_days,
+                    minimum_samples, minimum_success_retention,
+                    maximum_harmful_rate, decision_rows, labeled_outcomes,
+                    observed_samples, champion_successes, champion_harmful,
+                    recommendation, recommended_profile, challengers, generated_at
+                ) VALUES (
+                    %s::UUID, %s, %s, %s,
+                    %s, %s,
+                    %s, %s, %s,
+                    %s, %s, %s,
+                    %s, %s, %s::JSONB, %s
+                )
+                """,
+                (
+                    run_id,
+                    summary.source,
+                    MEMORY_QUALITY_CALIBRATION_REVISION,
+                    int(lookback_days),
+                    int(minimum_samples),
+                    float(minimum_success_retention),
+                    float(maximum_harmful_rate),
+                    int(decision_rows),
+                    int(labeled_outcomes),
+                    int(summary.observed_samples),
+                    int(summary.champion_successes),
+                    int(summary.champion_harmful),
+                    summary.recommendation,
+                    summary.recommended_profile,
+                    json.dumps(
+                        list(summary.challengers),
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    at,
+                ),
+            )
+        conn.commit()
+    except Exception:
+        rollback = getattr(conn, "rollback", None)
+        if callable(rollback):
+            rollback()
+        raise
+    finally:
+        conn.close()
+    return PersistedCalibrationRun(
+        run_id=run_id,
+        source=summary.source,
+        decision_rows=int(decision_rows),
+        labeled_outcomes=int(labeled_outcomes),
+        summary=summary,
+        generated_at=at,
+    )
+
+
+def run_persisted_calibration(
+    *,
+    connection_factory: Callable[[], object],
+    source: str = "AGENT_API",
+    lookback_days: int = DEFAULT_CALIBRATION_LOOKBACK_DAYS,
+    minimum_samples: int = DEFAULT_CALIBRATION_MINIMUM_SAMPLES,
+    minimum_success_retention: float = DEFAULT_CALIBRATION_MINIMUM_SUCCESS_RETENTION,
+    maximum_harmful_rate: float = DEFAULT_CALIBRATION_MAXIMUM_HARMFUL_RATE,
+) -> PersistedCalibrationRun:
+    rows = load_calibration_rows(
+        connection_factory=connection_factory,
+        source=source,
+        lookback_days=lookback_days,
+    )
+    summary = calibrate_from_telemetry_rows(
+        rows,
+        source=source,
+        minimum_samples=minimum_samples,
+        minimum_success_retention=minimum_success_retention,
+        maximum_harmful_rate=maximum_harmful_rate,
+    )
+    return insert_calibration_run(
+        connection_factory=connection_factory,
+        summary=summary,
+        decision_rows=len(rows),
+        labeled_outcomes=sum(row.get("outcome") is not None for row in rows),
+        lookback_days=lookback_days,
+        minimum_samples=minimum_samples,
+        minimum_success_retention=minimum_success_retention,
+        maximum_harmful_rate=maximum_harmful_rate,
+    )
+
+
+def calibration_is_due(
+    *,
+    connection_factory: Callable[[], object],
+    source: str = "AGENT_API",
+    interval_hours: int = DEFAULT_CALIBRATION_INTERVAL_HOURS,
+    now: datetime | None = None,
+) -> bool:
+    """Return whether the append-only evaluator should create another run."""
+
+    if interval_hours <= 0:
+        raise ValueError("interval_hours must be positive")
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    conn = connection_factory()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT generated_at
+                FROM decision_memory_quality_calibration_runs
+                WHERE source = %s
+                ORDER BY generated_at DESC, run_id DESC
+                LIMIT 1
+                """,
+                (source,),
+            )
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    if row is None or row[0] is None:
+        return True
+    last = row[0]
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)
+    return current - last.astimezone(timezone.utc) >= timedelta(hours=interval_hours)

@@ -1063,6 +1063,11 @@ def test_scheduled_event_drains_durable_consolidation_outbox(monkeypatch):
         "_drain_consolidation_outbox",
         lambda: {"completed": 2, "deferred": 0, "backlog": 0},
     )
+    monkeypatch.setattr(
+        aws_lambda,
+        "_maybe_run_memory_quality_calibration",
+        lambda: {"status": "NOT_DUE", "interval_hours": 24},
+    )
 
     response = aws_lambda.lambda_handler(
         {"source": "aws.events", "detail-type": "Scheduled Event"},
@@ -1073,4 +1078,59 @@ def test_scheduled_event_drains_durable_consolidation_outbox(monkeypatch):
     body = json.loads(response["body"])
     assert body["scheduled"] == "consolidation-retry"
     assert body["result"]["completed"] == 2
+    assert body["memory_quality_calibration"]["status"] == "NOT_DUE"
     assert calls == ["security"]
+
+
+def test_scheduled_memory_quality_calibration_is_read_only_threshold_evaluation(
+    monkeypatch,
+):
+    calls = []
+    monkeypatch.setattr(
+        aws_lambda,
+        "_refresh_runtime_security_state",
+        lambda **_kwargs: calls.append("security"),
+    )
+    monkeypatch.setattr(
+        aws_lambda,
+        "_run_memory_quality_calibration",
+        lambda: {
+            "observed_samples": 7,
+            "recommendation": "INSUFFICIENT_REAL_TELEMETRY",
+            "recommended_profile": None,
+        },
+    )
+
+    response = aws_lambda.lambda_handler(
+        {
+            "source": "aws.events",
+            "detail-type": "Scheduled Event",
+            "detail": {"task": "memory-quality-calibration"},
+        },
+        None,
+    )
+
+    assert response["statusCode"] == 200
+    body = json.loads(response["body"])
+    assert body["scheduled"] == "memory-quality-calibration"
+    assert body["result"]["observed_samples"] == 7
+    assert body["result"]["recommended_profile"] is None
+    assert calls == ["security"]
+
+
+def test_unknown_scheduled_task_fails_closed(monkeypatch):
+    monkeypatch.setattr(
+        aws_lambda,
+        "_refresh_runtime_security_state",
+        lambda **_kwargs: None,
+    )
+    response = aws_lambda.lambda_handler(
+        {
+            "source": "aws.events",
+            "detail-type": "Scheduled Event",
+            "detail": {"task": "unexpected-task"},
+        },
+        None,
+    )
+    assert response["statusCode"] == 400
+    assert json.loads(response["body"])["error"] == "unknown_scheduled_task"

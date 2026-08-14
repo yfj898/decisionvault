@@ -14,6 +14,7 @@ def test_memory_operations_alarms_cover_deferred_secret_and_backlog_failures():
         "ConsolidationOutboxBacklog",
         "MemoryQualityDecisionWriteFailureCount",
         "MemoryQualityOutcomeWriteFailureCount",
+        "MemoryQualityCalibrationFailureCount",
     }
     assert all(alarm["Namespace"] == "DecisionVault" for alarm in alarms)
     assert all(alarm["TreatMissingData"] == "notBreaching" for alarm in alarms)
@@ -36,4 +37,8 @@ def test_memory_operations_dashboard_contains_request_and_memory_panels():
     assert "AdaptiveMemoryHitCount" in serialized
     assert "MemoryQualityDecisionObservedCount" in serialized
     assert "MemoryQualityOutcomeWriteFailureCount" in serialized
+    assert "MemoryQualityCalibrationRunCount" in serialized
+    assert "MemoryQualityCalibrationObservedSamples" in serialized
+    assert "MemoryQualityCalibrationRecommendationCount" in serialized
+    assert "MemoryQualityCalibrationFailureCount" in serialized
     assert "scope_id" not in serialized

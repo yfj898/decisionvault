@@ -5,7 +5,11 @@ from dataclasses import asdict
 import json
 from pathlib import Path
 
-from decisionvault.memory_telemetry import calibrate_from_telemetry_rows
+from decisionvault.memory.connection import psycopg_connection_factory
+from decisionvault.memory_telemetry import (
+    calibrate_from_telemetry_rows,
+    load_calibration_rows,
+)
 
 
 def main() -> int:
@@ -37,53 +41,20 @@ def main() -> int:
     if not 0.0 <= args.maximum_harmful_rate <= 1.0:
         raise SystemExit("maximum-harmful-rate must be between 0 and 1")
 
-    import psycopg
-    from psycopg.conninfo import conninfo_to_dict
+    from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
     cfg = conninfo_to_dict(args.database_url_file.read_text(encoding="utf-8").strip())
     cfg["sslrootcert"] = str(args.ca_file.resolve())
-    cfg["connect_timeout"] = "5"
-    cfg["options"] = "-c statement_timeout=30000"
-    conn = psycopg.connect(**cfg)
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT d.source, d.decided_at, d.scope_level, d.selected_strategy,
-                       d.executable, d.memory_influenced, d.memory_resolution,
-                       d.memory_conflict, d.quality_features,
-                       o.outcome, o.effectiveness, o.confidence,
-                       o.observed_at, o.recorded_at
-                FROM decision_memory_quality_decisions d
-                LEFT JOIN decision_memory_quality_outcomes o
-                  ON o.decision_snapshot_id = d.decision_snapshot_id
-                WHERE d.source = %s
-                  AND d.decided_at >= now() - (%s * INTERVAL '1 day')
-                ORDER BY d.decided_at
-                """,
-                (args.source, args.lookback_days),
-            )
-            rows = [
-                {
-                    "source": row[0],
-                    "decided_at": row[1].isoformat(),
-                    "scope_level": row[2],
-                    "selected_strategy": row[3],
-                    "executable": bool(row[4]),
-                    "memory_influenced": bool(row[5]),
-                    "memory_resolution": row[6],
-                    "memory_conflict": bool(row[7]),
-                    "quality_features": row[8] or {},
-                    "outcome": row[9],
-                    "effectiveness": float(row[10]) if row[10] is not None else None,
-                    "confidence": float(row[11]) if row[11] is not None else None,
-                    "observed_at": row[12].isoformat() if row[12] is not None else None,
-                    "recorded_at": row[13].isoformat() if row[13] is not None else None,
-                }
-                for row in cur.fetchall()
-            ]
-    finally:
-        conn.close()
+    calibration_database_url = make_conninfo(**cfg)
+    rows = load_calibration_rows(
+        connection_factory=psycopg_connection_factory(
+            calibration_database_url,
+            connect_timeout_seconds=5,
+            statement_timeout_ms=30000,
+        ),
+        source=args.source,
+        lookback_days=args.lookback_days,
+    )
 
     summary = calibrate_from_telemetry_rows(
         rows,

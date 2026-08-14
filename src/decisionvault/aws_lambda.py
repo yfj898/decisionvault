@@ -47,8 +47,15 @@ from decisionvault.memory.connection import psycopg_connection_factory
 from decisionvault.memory.consolidation import CockroachMemoryConsolidationService
 from decisionvault.memory.outbox import ConsolidationOutbox, ConsolidationWorkItem
 from decisionvault.memory_telemetry import (
+    DEFAULT_CALIBRATION_INTERVAL_HOURS,
+    DEFAULT_CALIBRATION_LOOKBACK_DAYS,
+    DEFAULT_CALIBRATION_MAXIMUM_HARMFUL_RATE,
+    DEFAULT_CALIBRATION_MINIMUM_SAMPLES,
+    DEFAULT_CALIBRATION_MINIMUM_SUCCESS_RETENTION,
+    calibration_is_due,
     insert_decision_quality_event,
     insert_outcome_quality_event,
+    run_persisted_calibration,
 )
 from decisionvault.memory.embedding import (
     NvidiaSemanticEmbedder,
@@ -449,6 +456,129 @@ def _build_consolidation_outbox() -> ConsolidationOutbox:
     )
 
 
+def _memory_quality_calibration_settings() -> tuple[int, int, float, float]:
+    lookback_days = int(
+        os.getenv(
+            "MEMORY_QUALITY_CALIBRATION_LOOKBACK_DAYS",
+            str(DEFAULT_CALIBRATION_LOOKBACK_DAYS),
+        )
+    )
+    minimum_samples = int(
+        os.getenv(
+            "MEMORY_QUALITY_CALIBRATION_MINIMUM_SAMPLES",
+            str(DEFAULT_CALIBRATION_MINIMUM_SAMPLES),
+        )
+    )
+    minimum_success_retention = float(
+        os.getenv(
+            "MEMORY_QUALITY_CALIBRATION_MINIMUM_SUCCESS_RETENTION",
+            str(DEFAULT_CALIBRATION_MINIMUM_SUCCESS_RETENTION),
+        )
+    )
+    maximum_harmful_rate = float(
+        os.getenv(
+            "MEMORY_QUALITY_CALIBRATION_MAXIMUM_HARMFUL_RATE",
+            str(DEFAULT_CALIBRATION_MAXIMUM_HARMFUL_RATE),
+        )
+    )
+    if lookback_days <= 0:
+        raise RuntimeError("memory-quality calibration lookback must be positive")
+    if minimum_samples <= 0:
+        raise RuntimeError("memory-quality calibration sample floor must be positive")
+    if not 0.0 <= minimum_success_retention <= 1.0:
+        raise RuntimeError("memory-quality calibration success retention is invalid")
+    if not 0.0 <= maximum_harmful_rate <= 1.0:
+        raise RuntimeError("memory-quality calibration harmful-rate gate is invalid")
+    return (
+        lookback_days,
+        minimum_samples,
+        minimum_success_retention,
+        maximum_harmful_rate,
+    )
+
+
+def _memory_quality_calibration_interval_hours() -> int:
+    value = int(
+        os.getenv(
+            "MEMORY_QUALITY_CALIBRATION_INTERVAL_HOURS",
+            str(DEFAULT_CALIBRATION_INTERVAL_HOURS),
+        )
+    )
+    if value <= 0:
+        raise RuntimeError("memory-quality calibration interval must be positive")
+    return value
+
+
+def _run_memory_quality_calibration() -> dict[str, Any]:
+    (
+        lookback_days,
+        minimum_samples,
+        minimum_success_retention,
+        maximum_harmful_rate,
+    ) = _memory_quality_calibration_settings()
+    try:
+        run = run_persisted_calibration(
+            connection_factory=psycopg_connection_factory(),
+            source="AGENT_API",
+            lookback_days=lookback_days,
+            minimum_samples=minimum_samples,
+            minimum_success_retention=minimum_success_retention,
+            maximum_harmful_rate=maximum_harmful_rate,
+        )
+    except Exception:
+        try:
+            emit_memory_metric(
+                event_name="memory_quality_calibration_failure",
+                quality_calibration_failure=1,
+            )
+        except Exception:
+            pass
+        raise
+    try:
+        emit_memory_metric(
+            event_name="memory_quality_calibration_run",
+            quality_calibration_run=1,
+            quality_calibration_samples=run.summary.observed_samples,
+            quality_calibration_recommendation=int(
+                run.summary.recommendation == "RECOMMEND_CHALLENGER_SHADOW_ONLY"
+            ),
+        )
+    except Exception:
+        pass
+    return {
+        "run_id": run.run_id,
+        "source": run.source,
+        "decision_rows": run.decision_rows,
+        "labeled_outcomes": run.labeled_outcomes,
+        "observed_samples": run.summary.observed_samples,
+        "recommendation": run.summary.recommendation,
+        "recommended_profile": run.summary.recommended_profile,
+        "minimum_samples": minimum_samples,
+        "minimum_success_retention": minimum_success_retention,
+        "maximum_harmful_rate": maximum_harmful_rate,
+    }
+
+
+def _maybe_run_memory_quality_calibration() -> dict[str, Any]:
+    interval_hours = _memory_quality_calibration_interval_hours()
+    connection_factory = psycopg_connection_factory()
+    if not calibration_is_due(
+        connection_factory=connection_factory,
+        source="AGENT_API",
+        interval_hours=interval_hours,
+    ):
+        return {
+            "status": "NOT_DUE",
+            "interval_hours": interval_hours,
+        }
+    result = _run_memory_quality_calibration()
+    return {
+        "status": "COMPLETE",
+        "interval_hours": interval_hours,
+        **result,
+    }
+
+
 def _build_memory_store() -> CockroachVectorMemoryStore:
     nvidia_key = os.getenv("NVIDIA_API_KEY", "").strip()
     if nvidia_key:
@@ -792,6 +922,8 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
     adaptive_memory_schema_ok = False
     adaptive_memory_current_ok = False
     memory_quality_telemetry_schema_ok = False
+    memory_quality_calibration_schema_ok = False
+    memory_quality_calibration_config_ok = False
     agent_auth_ok = False
     receipt_signing_ok = False
     demo_auth_ok = False
@@ -833,6 +965,13 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
             memory_scope_control_ok = True
         except Exception as exc:
             errors.append(f"memory_scope_control:{type(exc).__name__}")
+
+        try:
+            _memory_quality_calibration_settings()
+            _memory_quality_calibration_interval_hours()
+            memory_quality_calibration_config_ok = True
+        except Exception as exc:
+            errors.append(f"memory_quality_calibration_config:{type(exc).__name__}")
 
         demo_auth_ok = bool(os.getenv("DEMO_API_TOKEN", "").strip())
         if not demo_auth_ok:
@@ -935,6 +1074,18 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
                         """
                     )
                     memory_quality_telemetry_schema_ok = True
+                    cur.execute(
+                        """
+                        SELECT run_id, source, calibration_revision, lookback_days,
+                               minimum_samples, minimum_success_retention,
+                               maximum_harmful_rate, decision_rows, labeled_outcomes,
+                               observed_samples, champion_successes, champion_harmful,
+                               recommendation, recommended_profile, challengers,
+                               generated_at
+                        FROM decision_memory_quality_calibration_runs LIMIT 0
+                        """
+                    )
+                    memory_quality_calibration_schema_ok = True
                     adaptive_memory_schema_ok = True
                     cur.execute(
                         """
@@ -1079,6 +1230,8 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
             adaptive_memory_schema_ok,
             adaptive_memory_current_ok,
             memory_quality_telemetry_schema_ok,
+            memory_quality_calibration_schema_ok,
+            memory_quality_calibration_config_ok,
             semantic_embedding_ok,
             semantic_embedding_revision_ok,
             semantic_head_space_ok,
@@ -1104,6 +1257,8 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
             "adaptive_memory_schema": adaptive_memory_schema_ok,
             "adaptive_memory_current": adaptive_memory_current_ok,
             "memory_quality_telemetry_schema": memory_quality_telemetry_schema_ok,
+            "memory_quality_calibration_schema": memory_quality_calibration_schema_ok,
+            "memory_quality_calibration_config": memory_quality_calibration_config_ok,
             "adaptive_memory_governance_revision": ADAPTIVE_MEMORY_GOVERNANCE_REVISION,
             "semantic_embedding": semantic_embedding_ok,
             "semantic_embedding_revision": semantic_embedding_revision_ok,
@@ -1694,12 +1849,35 @@ def _handle_request(event: dict[str, Any], _context: Any) -> dict[str, Any]:
             and event.get("detail-type") == "Scheduled Event"
         ):
             _refresh_runtime_security_state()
+            detail = event.get("detail") or {}
+            task = str(detail.get("task", "consolidation-retry")).strip()
+            if task == "memory-quality-calibration":
+                return _json_response(
+                    200,
+                    {
+                        "service": "decisionvault",
+                        "scheduled": "memory-quality-calibration",
+                        "result": _run_memory_quality_calibration(),
+                    },
+                )
+            if task != "consolidation-retry":
+                return _json_response(
+                    400,
+                    {
+                        "service": "decisionvault",
+                        "error": "unknown_scheduled_task",
+                    },
+                )
+            consolidation_result = _drain_consolidation_outbox()
             return _json_response(
                 200,
                 {
                     "service": "decisionvault",
                     "scheduled": "consolidation-retry",
-                    "result": _drain_consolidation_outbox(),
+                    "result": consolidation_result,
+                    "memory_quality_calibration": (
+                        _maybe_run_memory_quality_calibration()
+                    ),
                 },
             )
         method = (
