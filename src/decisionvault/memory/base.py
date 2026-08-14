@@ -15,3 +15,11 @@ class MemoryStore(Protocol):
         situation: str,
         limit: int = 5,
     ) -> list[RecalledEpisode]: ...
+
+    def recall_governed(
+        self,
+        *,
+        scope_id: str,
+        situation: str,
+        minimum_similarity: float,
+    ) -> list[RecalledEpisode]: ...

@@ -143,10 +143,44 @@ class CockroachVectorMemoryStore:
                     producer_agent_id = str(
                         episode.evidence.get("producer_agent_id", "")
                     ).strip()
+                    incoming_is_newest = True
+                    if semantic_vector is not None and producer_agent_id:
+                        # Immutable history is the durable event-time watermark.
+                        # This prevents an older execution receipt that arrives
+                        # late from becoming current after a newer write,
+                        # supersession, or revocation removed/replaced the head.
+                        cur.execute(
+                            """
+                            SELECT max(created_at)
+                            FROM decision_episodes
+                            WHERE scope_id = %s
+                              AND strategy = %s
+                              AND evidence->>'producer_agent_id' = %s
+                            """,
+                            (
+                                episode.scope_id,
+                                episode.strategy.value,
+                                producer_agent_id,
+                            ),
+                        )
+                        watermark_row = cur.fetchone()
+                        latest_observed_at = (
+                            watermark_row[0]
+                            if watermark_row is not None and watermark_row[0] is not None
+                            else None
+                        )
+                        incoming_is_newest = (
+                            latest_observed_at is None
+                            or episode.created_at > latest_observed_at
+                        )
                     if semantic_vector is not None and supersedes_episode_id:
                         if not producer_agent_id:
                             raise SupersessionWriteConflict(
                                 "supersession requires producer provenance"
+                            )
+                        if not incoming_is_newest:
+                            raise SupersessionWriteConflict(
+                                "supersession observation is older than existing producer history"
                             )
                         cur.execute(
                             """
@@ -154,12 +188,14 @@ class CockroachVectorMemoryStore:
                             WHERE scope_id = %s
                               AND producer_agent_id = %s
                               AND episode_id = %s::UUID
+                              AND created_at < %s
                             RETURNING episode_id::STRING
                             """,
                             (
                                 episode.scope_id,
                                 producer_agent_id,
                                 supersedes_episode_id,
+                                episode.created_at,
                             ),
                         )
                         deleted = cur.fetchone()
@@ -168,10 +204,14 @@ class CockroachVectorMemoryStore:
                                 "supersession target is not the producer's current governed head"
                             )
                     cur.execute(sql, params)
-                    if semantic_vector is not None and producer_agent_id:
+                    if (
+                        semantic_vector is not None
+                        and producer_agent_id
+                        and incoming_is_newest
+                    ):
                         cur.execute(
                             """
-                            UPSERT INTO decision_memory_heads (
+                            INSERT INTO decision_memory_heads (
                                 scope_id, producer_agent_id, strategy, episode_id,
                                 situation, outcome, effectiveness, confidence,
                                 evidence, execution_receipt_id, supersedes_episode_id,
@@ -181,6 +221,20 @@ class CockroachVectorMemoryStore:
                                 %s, %s, %s, %s,
                                 %s::JSONB, %s, %s::UUID, %s::VECTOR, %s, %s
                             )
+                            ON CONFLICT (scope_id, producer_agent_id, strategy)
+                            DO UPDATE SET
+                                episode_id = excluded.episode_id,
+                                situation = excluded.situation,
+                                outcome = excluded.outcome,
+                                effectiveness = excluded.effectiveness,
+                                confidence = excluded.confidence,
+                                evidence = excluded.evidence,
+                                execution_receipt_id = excluded.execution_receipt_id,
+                                supersedes_episode_id = excluded.supersedes_episode_id,
+                                semantic_embedding = excluded.semantic_embedding,
+                                semantic_embedding_space = excluded.semantic_embedding_space,
+                                created_at = excluded.created_at
+                            WHERE excluded.created_at > decision_memory_heads.created_at
                             """,
                             (
                                 episode.scope_id,
@@ -316,6 +370,11 @@ class CockroachVectorMemoryStore:
                 FROM decision_memory_heads
                 WHERE scope_id = %s
                   AND semantic_embedding_space = %s
+                  AND NOT EXISTS (
+                    SELECT 1 FROM decision_memory_revocations r
+                    WHERE r.scope_id = decision_memory_heads.scope_id
+                      AND r.episode_id = decision_memory_heads.episode_id
+                  )
                   AND COALESCE(upper(evidence->>'memory_status'), 'ACTIVE') <> 'REVOKED'
                   AND (
                     COALESCE(lower(evidence->>'pinned'), 'false') = 'true'
@@ -345,6 +404,11 @@ class CockroachVectorMemoryStore:
                     embedding <=> %s::VECTOR AS cosine_distance
                 FROM decision_episodes
                 WHERE scope_id = %s
+                  AND NOT EXISTS (
+                    SELECT 1 FROM decision_memory_revocations r
+                    WHERE r.scope_id = decision_episodes.scope_id
+                      AND r.episode_id = decision_episodes.episode_id
+                  )
                 ORDER BY embedding <=> %s::VECTOR
                 LIMIT %s
             """
@@ -368,6 +432,147 @@ class CockroachVectorMemoryStore:
                 conn.close()
 
         rows = retry_cockroach_serialization(read_transaction)
+
+        recalled: list[RecalledEpisode] = []
+        for row in rows:
+            distance = max(0.0, min(1.0, float(row[9])))
+            recalled.append(
+                RecalledEpisode(
+                    episode=DecisionEpisode(
+                        episode_id=row[0],
+                        scope_id=row[1],
+                        situation=row[2],
+                        strategy=Strategy(row[3]),
+                        outcome=Outcome(row[4]),
+                        effectiveness=float(row[5]),
+                        confidence=float(row[6]),
+                        evidence=row[7] or {},
+                        created_at=row[8],
+                    ),
+                    similarity=1.0 - distance,
+                )
+            )
+        return recalled
+
+    def recall_governed(
+        self,
+        *,
+        scope_id: str,
+        situation: str,
+        minimum_similarity: float,
+    ) -> list[RecalledEpisode]:
+        """Return complete governed evidence above the relevance threshold.
+
+        The semantic path intentionally performs two reads with one query
+        embedding: an ANN top-32 read exercises the production DVI for the common
+        fast path, while an exact threshold coverage read adds every other
+        admissible head whose similarity can affect governance. Correctness is
+        therefore not bounded by the ANN K value.
+        """
+
+        if not 0.0 <= minimum_similarity <= 1.0:
+            raise ValueError("minimum_similarity must be between 0 and 1")
+        max_distance = 1.0 - minimum_similarity
+
+        if self.semantic_query_embedder is not None:
+            vector = _vector_literal(self.semantic_query_embedder(situation))
+            semantic_space = (self.semantic_embedding_space or "").strip()
+            admissible = """
+                  AND NOT EXISTS (
+                    SELECT 1 FROM decision_memory_revocations r
+                    WHERE r.scope_id = h.scope_id AND r.episode_id = h.episode_id
+                  )
+                  AND COALESCE(upper(h.evidence->>'memory_status'), 'ACTIVE') <> 'REVOKED'
+                  AND (
+                    COALESCE(lower(h.evidence->>'pinned'), 'false') = 'true'
+                    OR h.created_at >= now() - INTERVAL '90 days'
+                  )
+                  AND (
+                    (h.outcome = 'SUCCESS' AND h.effectiveness >= 0.7)
+                    OR (h.outcome = 'FAILED' AND h.confidence >= 0.6)
+                  )
+            """
+            ann_sql = f"""
+                SELECT h.episode_id::STRING, h.scope_id, h.situation, h.strategy,
+                       h.outcome, h.effectiveness, h.confidence, h.evidence,
+                       h.created_at,
+                       h.semantic_embedding <=> %s::VECTOR AS cosine_distance
+                FROM decision_memory_heads h
+                WHERE h.scope_id = %s
+                  AND h.semantic_embedding_space = %s
+                  {admissible}
+                ORDER BY h.semantic_embedding <=> %s::VECTOR
+                LIMIT 32
+            """
+            coverage_sql = f"""
+                SELECT h.episode_id::STRING, h.scope_id, h.situation, h.strategy,
+                       h.outcome, h.effectiveness, h.confidence, h.evidence,
+                       h.created_at,
+                       h.semantic_embedding <=> %s::VECTOR AS cosine_distance
+                FROM decision_memory_heads h
+                WHERE h.scope_id = %s
+                  AND h.semantic_embedding_space = %s
+                  {admissible}
+                  AND h.semantic_embedding <=> %s::VECTOR <= %s
+                ORDER BY cosine_distance
+            """
+
+            def semantic_read_transaction():
+                conn = self.connection_factory()
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            ann_sql,
+                            (vector, scope_id, semantic_space, vector),
+                        )
+                        ann_rows = cur.fetchall()
+                        cur.execute(
+                            coverage_sql,
+                            (
+                                vector,
+                                scope_id,
+                                semantic_space,
+                                vector,
+                                max_distance,
+                            ),
+                        )
+                        coverage_rows = cur.fetchall()
+                    merged = {row[0]: row for row in ann_rows}
+                    for row in coverage_rows:
+                        merged[row[0]] = row
+                    return sorted(merged.values(), key=lambda row: float(row[9]))
+                finally:
+                    conn.close()
+
+            rows = retry_cockroach_serialization(semantic_read_transaction)
+        else:
+            embed_query = self.query_embedder or self.embedder
+            vector = _vector_literal(embed_query(situation))
+            sql = """
+                SELECT e.episode_id::STRING, e.scope_id, e.situation, e.strategy,
+                       e.outcome, e.effectiveness, e.confidence, e.evidence,
+                       e.created_at,
+                       e.embedding <=> %s::VECTOR AS cosine_distance
+                FROM decision_episodes e
+                WHERE e.scope_id = %s
+                  AND NOT EXISTS (
+                    SELECT 1 FROM decision_memory_revocations r
+                    WHERE r.scope_id = e.scope_id AND r.episode_id = e.episode_id
+                  )
+                  AND e.embedding <=> %s::VECTOR <= %s
+                ORDER BY cosine_distance
+            """
+
+            def deterministic_read_transaction():
+                conn = self.connection_factory()
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute(sql, (vector, scope_id, vector, max_distance))
+                        return cur.fetchall()
+                finally:
+                    conn.close()
+
+            rows = retry_cockroach_serialization(deterministic_read_transaction)
 
         recalled: list[RecalledEpisode] = []
         for row in rows:

@@ -56,6 +56,34 @@ class InMemoryEpisodeStore:
         )
         return matches[:limit]
 
+    def recall_governed(
+        self,
+        *,
+        scope_id: str,
+        situation: str,
+        minimum_similarity: float,
+    ) -> list[RecalledEpisode]:
+        matches = [
+            RecalledEpisode(
+                episode=episode,
+                similarity=_similarity(situation, episode.situation),
+            )
+            for episode in self._episodes
+            if episode.scope_id == scope_id
+        ]
+        matches = [
+            match for match in matches if match.similarity >= minimum_similarity
+        ]
+        matches.sort(
+            key=lambda match: (
+                match.similarity,
+                match.episode.confidence,
+                match.episode.created_at,
+            ),
+            reverse=True,
+        )
+        return matches
+
     @property
     def episodes(self) -> tuple[DecisionEpisode, ...]:
         return tuple(self._episodes)

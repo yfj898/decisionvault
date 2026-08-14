@@ -15,7 +15,19 @@ Baseline:
 8 tests PASS
 
 Current local verification:
-101 tests PASS
+107 tests PASS
+Boundary hardening v3: PASS (server-owned sandbox scenario / mandatory memory governance / event-time head ordering / backend-independent revoke / unbounded governance coverage)
+Caller-supplied `/execute` scenario rejected: PASS
+Caller-supplied `/decide memory_enabled=false` rejected: PASS
+Late older execution receipt cannot replace newer governed head: PASS
+Late older receipt cannot resurrect a revoked producer head: PASS
+Deterministic fallback recall honors revocation audit: PASS
+33 governed heads returned by exact-threshold coverage beyond ANN top-32: PASS
+Hosted caller scenario override: HTTP 400
+Hosted caller memory-disable override: HTTP 400
+Hosted reverse-order signed-receipt submission: newer head preserved / old receipt history-only
+Hosted revoke → deterministic fallback recall: 0 episodes
+Post-boundary-v3 production semantic benchmark: 14/14 PASS
 Multi-agent follow-up hardening: PASS (pre-governance candidate filtering / atomic supersession / governed-only advisor evidence)
 6+ distinct-head adversarial governance regression: PASS
 Stale/revoked crowding regression: PASS

@@ -89,12 +89,14 @@ key is:
 Immutable history is still written to `decision_episodes`, but only the current
 head for a producer/strategy participates in ANN candidate generation.
 
-Follow-up adversarial review found that a fixed top-5 over governed heads could
-still hide a sixth independent contradiction when unrelated, stale, revoked, or
-otherwise inadmissible heads ranked above it. Production semantic recall now
-pre-filters lifecycle/signal-inadmissible heads in SQL and the agent requests a
-32-candidate governance pool instead of the old fixed 5. The resolver remains
-the authority for similarity, trust, aggregation, and conflict abstention.
+Follow-up adversarial review found that any fixed ANN K can hide a lower-ranked
+independent contradiction. Production semantic recall now pre-filters
+lifecycle/signal-inadmissible heads in SQL and runs two stages from one query
+embedding: a top-32 ANN/DVI fast path plus an exact similarity-threshold coverage
+scan with no fixed candidate limit. The two result sets are merged before the
+resolver applies trust, aggregation, and conflict abstention. A live 33-head
+Cloud probe returned all 33 governed candidates, so correctness is no longer
+bounded by the ANN hint.
 
 Live CockroachDB Cloud adversarial verification:
 

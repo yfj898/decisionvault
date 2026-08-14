@@ -16,7 +16,7 @@ DecisionVault now separates execution from recording:
 ```text
 authenticated agent
 → POST /execute
-→ server-controlled payment-recovery sandbox
+→ server-controlled payment-recovery sandbox scenario
 → HMAC-signed execution receipt
 → POST /record
 → signature / agent / scope / TTL verification
@@ -26,6 +26,12 @@ authenticated agent
 
 This is explicitly a hackathon payment-recovery sandbox, not a claim that the
 receipt came from a real payment processor.
+
+The general execution request does not accept a scenario selector. The hosted
+fixture is selected through non-secret server configuration
+`EXECUTION_SANDBOX_SCENARIO`; a request containing `scenario` is rejected. This
+prevents an authenticated caller from choosing which outcome table row the
+server will sign.
 
 ## Receipt binding
 
@@ -94,6 +100,11 @@ cleanup_rows=(0, 0)
 
 The remembered failure therefore came from a server-signed execution result and
 still caused the later planner agent to change strategy.
+
+The receipt `issued_at` is also the observation/event time persisted for memory
+ordering. Immutable history provides the producer/strategy event-time
+high-watermark: a late older receipt is retained as history but cannot replace a
+newer governed head, including after the newer head was revoked.
 
 ## Boundary
 

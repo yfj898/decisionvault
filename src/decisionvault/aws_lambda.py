@@ -16,6 +16,7 @@ from decisionvault.agent.memory_governance import (
 from decisionvault.agent.policy import OutcomeAwarePolicy
 from decisionvault.domain import Decision, DecisionAction, Outcome, Strategy
 from decisionvault.execution import (
+    configured_sandbox_scenario,
     issue_sandbox_receipt,
     verify_execution_receipt,
 )
@@ -413,8 +414,11 @@ def _decide(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
     if not scope_id or not situation:
         raise ValueError("scope_id and situation are required")
 
-    memory_enabled = bool(body.get("memory_enabled", True))
-    decision = _build_agent(memory_enabled=memory_enabled, agent_id=agent_id).decide(
+    if "memory_enabled" in body:
+        raise ValueError(
+            "memory_enabled is server-controlled on the general agent API"
+        )
+    decision = _build_agent(memory_enabled=True, agent_id=agent_id).decide(
         scope_id=scope_id,
         situation=situation,
     )
@@ -424,9 +428,13 @@ def _decide(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
 def _execute(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
     scope_id = str(body.get("scope_id", "")).strip()
     situation = str(body.get("situation", "")).strip()
-    scenario = str(body.get("scenario", "")).strip()
-    if not scope_id or not situation or not scenario:
-        raise ValueError("scope_id, situation, and scenario are required")
+    if not scope_id or not situation:
+        raise ValueError("scope_id and situation are required")
+    if "scenario" in body:
+        raise ValueError("scenario is server-controlled and must not be supplied")
+    scenario = configured_sandbox_scenario(
+        os.getenv("EXECUTION_SANDBOX_SCENARIO", "stale_payment_token")
+    )
     strategy = Strategy(str(body.get("strategy", "")))
     current_decision = _build_agent(
         memory_enabled=True,
@@ -678,6 +686,7 @@ def _record(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
     evidence: dict[str, str] = {
         "execution_receipt_id": receipt.receipt_id,
         "execution_scenario": receipt.scenario,
+        "execution_issued_at": receipt.issued_at.isoformat(),
         "execution_verified": "true",
         "execution_outcome_source": "decisionvault-payment-recovery-sandbox",
     }
@@ -701,6 +710,7 @@ def _record(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
             effectiveness=receipt.effectiveness,
             confidence=receipt.confidence,
             evidence=evidence,
+            observed_at=receipt.issued_at,
         )
     except Exception as exc:
         # The unique execution_receipt_id index is the final race-safe idempotency

@@ -33,12 +33,12 @@ decision:
 3. an episode named by another episode's `supersedes_episode_id` is retired;
 4. unpinned memory older than the configured age window (90 days by default) is
    ignored;
-5. production ANN retrieval reads the governed-head table, whose primary key
-   keeps only one current candidate per producer + strategy before ANN ranking;
-   production recall also pre-filters revoked, stale, UNKNOWN, low-confidence
-   failure, and low-effectiveness success heads before ranking, then over-fetches
-   up to 32 governed candidates so the resolver is not constrained by the old
-   top-5 boundary;
+5. production retrieval reads the governed-head table, whose primary key keeps
+   only one current candidate per producer + strategy. It pre-filters revoked,
+   stale, UNKNOWN, low-confidence failure, and low-effectiveness success heads,
+   then merges a top-32 ANN/DVI fast path with an exact relevance-threshold
+   coverage scan that has no fixed K. The ANN value is therefore a performance
+   hint, not a governance correctness boundary;
 6. successful and failed outcome evidence are aggregated separately;
 7. producer identity/scope/permission/trust comes from a server-side token grant,
    never from a caller-supplied `agent_id`; unknown producers receive a
@@ -60,6 +60,16 @@ decision:
    before vector ranking;
 12. when trust or stronger evidence resolves the winner, `memory_conflict` remains
    true so the disagreement is still visible to the caller.
+13. verified execution observations use the signed receipt `issued_at` as event
+    time. Immutable producer/strategy history is the durable high-watermark, so a
+    delayed older receipt may remain auditable but cannot replace a newer head or
+    resurrect an older head after revocation;
+14. revocation audit events are consulted by both semantic-head recall and the
+    deterministic `decision_episodes` fallback, so a revoked episode cannot
+    reappear merely because the backend changes;
+15. general agent routes cannot disable memory or choose the sandbox scenario.
+    Memory OFF is restricted to judge/benchmark ablation, and the hosted sandbox
+    scenario comes from server configuration.
 
 ## Local adversarial contract
 
@@ -246,6 +256,30 @@ token is rejected on `/decide`, a caller-supplied `agent_id` is rejected, and a
 valid planner token is rejected outside its granted scope. The two atomic judge
 demo routes intentionally keep a separate hackathon demo token. This is still a
 compact application grant mechanism, not a claim of enterprise IAM integration.
+
+## Boundary-v3 live verification
+
+The follow-up boundary pass exercised the five remaining correctness edges on
+the real hosted/Cloud path:
+
+```text
+caller-supplied /execute scenario                 HTTP 400
+server-owned sandbox scenario                    stale_payment_token
+caller-supplied /decide memory_enabled=false     HTTP 400
+newer signed receipt recorded before older one   newer head preserved
+late older signed receipt                        immutable history only
+late older event after revoke                    no head resurrection
+deterministic fallback after hosted revoke       0 recalled episodes
+governed coverage with 33 relevant Cloud heads   33 returned
+native semantic benchmark after coverage change  14 / 14 PASS
+```
+
+For verified receipts, `issued_at` is the memory observation time. Before a
+producer/strategy head can advance, the store consults immutable history as a
+durable high-watermark; an older event can still be inserted for auditability
+but cannot become current. The semantic production read keeps the top-32 DVI
+query as a fast path and merges it with an exact threshold coverage scan, so
+the number 32 no longer determines whether a conflict is visible.
 
 ## Hosted conflict proof
 

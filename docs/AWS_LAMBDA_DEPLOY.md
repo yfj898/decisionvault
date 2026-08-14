@@ -32,6 +32,8 @@ Hosted Lambda environment variables:
 - `READINESS_CACHE_SECONDS=30`
 - `REVOKE_AGENT_IDS` — comma-separated server-bound agent IDs allowed to invoke
   revocation after normal token/scope capability checks; contains no raw token
+- `EXECUTION_SANDBOX_SCENARIO=stale_payment_token` — non-secret server-owned
+  sandbox fixture; general `/execute` callers cannot override it
 
 The referenced secret stores `DATABASE_URL`, `NVIDIA_API_KEY`, `DEMO_API_TOKEN`,
 `AGENT_AUTH_JSON`, and `EXECUTION_RECEIPT_SECRET`. The Lambda execution role is
@@ -50,7 +52,7 @@ Secrets Manager at runtime.
   schema + E5-v5 readiness
 - `POST /execute` — agent-token authenticated sandbox execution; returns a signed
   receipt only if the current deterministic policy is executable and commits the
-  requested strategy
+  requested strategy; caller-supplied `scenario` is rejected
 - `POST /record` — agent-token authenticated outcome recording
 - `POST /decide` — agent-token authenticated scoped recall/decision
 - `POST /revoke` — producer-bound current-head revocation with append-only audit
@@ -63,10 +65,19 @@ The `/decide` response exposes `memory_influenced`, recalled episode IDs,
 explanation. A conflict abstention is `strategy=null`, `action=ABSTAIN`, and
 `executable=false`.
 
+The general `/decide` route always runs with memory governance enabled and
+rejects a caller-supplied `memory_enabled` override. Memory OFF exists only in
+the protected judge demo and offline ablation harnesses.
+
 The caller does not supply `agent_id` to `/execute`, `/record`, `/decide`, or
 `/revoke`; identity comes from the authenticated grant. Requests outside the
 token's namespace boundary or permission are rejected. Revocation additionally
 requires that server-bound identity in `REVOKE_AGENT_IDS`.
+
+Verified receipt `issued_at` is persisted as the observation/event time. Current
+heads advance monotonically by that event time, using immutable producer/strategy
+history as a high-watermark, so delayed older receipts remain auditable without
+replacing newer state or reappearing after a revoke.
 
 `/record` does not accept direct `outcome` / `effectiveness` / `confidence`
 fields. It requires the signed receipt returned by `/execute`; the receipt ID is

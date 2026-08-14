@@ -292,12 +292,17 @@ AWS Lambda /execute
 ```
 
 General agents cannot submit arbitrary outcome labels to `/record`. `/execute`
-derives the outcome from the server-controlled hackathon scenario and signs a
-receipt that binds agent identity, scope, situation, strategy, result, and issue
-time. `/record` verifies that receipt and persists its unique `receipt_id` as an
+derives the outcome from the server-controlled `EXECUTION_SANDBOX_SCENARIO` and
+rejects any caller-supplied `scenario`, then signs a receipt that binds agent
+identity, scope, situation, strategy, result, and issue time. `/record` verifies
+that receipt and persists its unique `receipt_id` as an
 idempotency key. Replaying the same receipt returns the original episode rather
 than duplicating memory. This is a controlled payment-recovery sandbox, not a
 claim of a real payment-processor integration.
+
+The general `/decide` API likewise keeps memory governance server-controlled:
+callers cannot submit `memory_enabled=false`. Memory OFF remains available only
+inside the protected judge demo and offline ablation/benchmark harnesses.
 
 The live Memory ON call returned `REFRESH_PAYMENT_TOKEN` with
 `memory_influenced=true`; the Memory OFF control returned `GENERIC_RETRY` with
@@ -442,7 +447,7 @@ repository. See `docs/evidence/PHASE4_MANAGED_MCP.md`.
 - [x] Real NVIDIA semantic embedding path (`passage` / `query`)
 - [x] Native `VECTOR(1024)` production semantic DVI; no hosted 1024→64 projection
 - [x] Cross-agent outcome-memory provenance and scope isolation
-- [x] Per-agent token → identity / scope / permission binding for `/record` and `/decide`
+- [x] Per-agent token → identity / scope / permission binding for `/execute`, `/record`, `/decide`, and `/revoke`
 - [x] Server-signed `/execute` receipts required by the general `/record` API
 - [x] Unique execution receipt idempotency boundary
 - [x] Typed/race-safe same-producer supersession boundary

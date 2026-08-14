@@ -34,6 +34,20 @@ SANDBOX_OUTCOMES: dict[str, dict[Strategy, tuple[Outcome, float]]] = {
 }
 
 
+def configured_sandbox_scenario(value: str | None) -> str:
+    """Validate the server-owned sandbox scenario.
+
+    General agents never choose this value in an execution request. The hosted
+    sandbox binds it from server configuration so a caller cannot obtain a
+    signed outcome merely by self-asserting a different scenario label.
+    """
+
+    scenario = (value or "stale_payment_token").strip()
+    if scenario not in SANDBOX_OUTCOMES:
+        raise ValueError(f"unsupported server sandbox scenario: {scenario}")
+    return scenario
+
+
 @dataclass(frozen=True, slots=True)
 class VerifiedExecutionReceipt:
     version: int

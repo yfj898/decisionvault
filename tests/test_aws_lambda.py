@@ -206,6 +206,28 @@ def test_decide_function_url_shape(monkeypatch):
     assert body["recalled_producer_agent_ids"] == ["recovery-observer"]
 
 
+def test_general_decide_rejects_caller_memory_disable(monkeypatch):
+    token = _configure_agent(monkeypatch)
+    response = aws_lambda.lambda_handler(
+        {
+            "requestContext": {"http": {"method": "POST"}},
+            "rawPath": "/decide",
+            "headers": {"X-DecisionVault-Agent-Token": token},
+            "body": json.dumps(
+                {
+                    "scope_id": "demo",
+                    "situation": "payment failed again",
+                    "memory_enabled": False,
+                }
+            ),
+        },
+        None,
+    )
+    body = json.loads(response["body"])
+    assert response["statusCode"] == 400
+    assert "server-controlled" in body["detail"]
+
+
 def test_bad_request_is_bounded():
     response = aws_lambda.lambda_handler(
         {
@@ -309,7 +331,6 @@ def test_execute_route_issues_server_signed_receipt(monkeypatch):
                     "scope_id": "demo",
                     "situation": "replacement card still uses stale merchant token",
                     "strategy": "GENERIC_RETRY",
-                    "scenario": "stale_payment_token",
                 }
             ),
         },
@@ -324,6 +345,53 @@ def test_execute_route_issues_server_signed_receipt(monkeypatch):
     assert receipt["signature"]
     assert body["policy_decision"]["action"] == "EXECUTE"
     assert body["policy_decision"]["executable"] is True
+
+
+def test_execute_route_rejects_caller_controlled_scenario(monkeypatch):
+    token = _configure_executor(monkeypatch)
+    response = aws_lambda.lambda_handler(
+        {
+            "requestContext": {"http": {"method": "POST"}},
+            "rawPath": "/execute",
+            "headers": {"X-DecisionVault-Agent-Token": token},
+            "body": json.dumps(
+                {
+                    "scope_id": "demo",
+                    "situation": "replacement card still uses stale merchant token",
+                    "strategy": "GENERIC_RETRY",
+                    "scenario": "transient_issuer_outage",
+                }
+            ),
+        },
+        None,
+    )
+    body = json.loads(response["body"])
+    assert response["statusCode"] == 400
+    assert "server-controlled" in body["detail"]
+
+
+def test_execute_route_uses_server_configured_scenario(monkeypatch):
+    token = _configure_executor(monkeypatch)
+    monkeypatch.setenv("EXECUTION_SANDBOX_SCENARIO", "transient_issuer_outage")
+    response = aws_lambda.lambda_handler(
+        {
+            "requestContext": {"http": {"method": "POST"}},
+            "rawPath": "/execute",
+            "headers": {"X-DecisionVault-Agent-Token": token},
+            "body": json.dumps(
+                {
+                    "scope_id": "demo",
+                    "situation": "same caller situation",
+                    "strategy": "GENERIC_RETRY",
+                }
+            ),
+        },
+        None,
+    )
+    body = json.loads(response["body"])
+    assert response["statusCode"] == 200
+    assert body["execution_receipt"]["scenario"] == "transient_issuer_outage"
+    assert body["execution_receipt"]["outcome"] == "SUCCESS"
 
 
 def test_execute_route_blocks_abstained_decision(monkeypatch):
@@ -354,7 +422,6 @@ def test_execute_route_blocks_abstained_decision(monkeypatch):
                     "scope_id": "demo",
                     "situation": "conflicting payment recovery evidence",
                     "strategy": "GENERIC_RETRY",
-                    "scenario": "stale_payment_token",
                 }
             ),
         },
@@ -378,7 +445,6 @@ def test_execute_route_rejects_strategy_not_committed_by_policy(monkeypatch):
                     "scope_id": "demo",
                     "situation": "payment retry",
                     "strategy": "REFRESH_PAYMENT_TOKEN",
-                    "scenario": "stale_payment_token",
                 }
             ),
         },
@@ -421,7 +487,6 @@ def test_record_returns_existing_episode_for_receipt_replay(monkeypatch):
                     "scope_id": "demo",
                     "situation": "stale token",
                     "strategy": "GENERIC_RETRY",
-                    "scenario": "stale_payment_token",
                 }
             ),
         },

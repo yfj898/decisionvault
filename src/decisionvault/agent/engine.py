@@ -11,7 +11,7 @@ from decisionvault.agent.policy import OutcomeAwarePolicy
 from decisionvault.providers.base import DecisionAdvisor
 
 
-GOVERNANCE_CANDIDATE_LIMIT = 32
+GOVERNANCE_ANN_CANDIDATE_HINT = 32
 
 
 @dataclass(slots=True)
@@ -23,15 +23,25 @@ class DecisionAgent:
     agent_id: str = "decision-agent"
 
     def decide(self, *, scope_id: str, situation: str) -> Decision:
-        recalled = (
-            self.memory.recall(
-                scope_id=scope_id,
-                situation=situation,
-                limit=GOVERNANCE_CANDIDATE_LIMIT,
-            )
-            if self.memory_enabled
-            else []
-        )
+        recalled: list = []
+        if self.memory_enabled:
+            governed_recall = getattr(self.memory, "recall_governed", None)
+            if callable(governed_recall):
+                recalled = governed_recall(
+                    scope_id=scope_id,
+                    situation=situation,
+                    minimum_similarity=self.policy.resolver.minimum_similarity,
+                )
+            else:
+                # Compatibility fallback for third-party stores that have not
+                # implemented the governed coverage contract yet. Production
+                # stores implement recall_governed, so correctness there is not
+                # bounded by this ANN hint.
+                recalled = self.memory.recall(
+                    scope_id=scope_id,
+                    situation=situation,
+                    limit=GOVERNANCE_ANN_CANDIDATE_HINT,
+                )
         decision = self.policy.decide(recalled=recalled)
         if self.advisor is None or decision.action == DecisionAction.ABSTAIN:
             return decision
@@ -72,6 +82,7 @@ class DecisionAgent:
         effectiveness: float,
         confidence: float = 1.0,
         evidence: Mapping[str, str] | None = None,
+        observed_at: datetime | None = None,
     ) -> DecisionEpisode:
         if not decision.executable or decision.strategy is None:
             raise ValueError("cannot record an outcome for a non-executable decision")
@@ -91,7 +102,7 @@ class DecisionAgent:
             effectiveness=effectiveness,
             confidence=confidence,
             evidence=episode_evidence,
-            created_at=datetime.now(timezone.utc),
+            created_at=(observed_at or datetime.now(timezone.utc)),
         )
         self.memory.save(episode)
         return episode
