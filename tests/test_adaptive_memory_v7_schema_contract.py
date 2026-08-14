@@ -83,3 +83,24 @@ def test_v7_contract_contains_only_runtime_privilege_narrowing():
     assert "FROM decisionvault_runtime" in sql
     assert "CREATE TABLE" not in sql
     assert "CREATE USER" not in sql
+
+
+def test_v7_cloud_smoke_uses_separate_consolidation_identity():
+    source = (ROOT / "scripts" / "adaptive_memory_cloud_smoke.py").read_text(
+        encoding="utf-8"
+    )
+    assert '"CONSOLIDATION_DATABASE_URL", runtime_database_url' in source
+    assert "consolidation_connection_factory = psycopg_connection_factory(" in source
+    assert "connection_factory=consolidation_connection_factory" in source
+    assert "DELETE FROM decision_memory_consolidation_outbox" in source
+    assert '"decision_memory_consolidation_outbox"' in source
+
+
+def test_v7_semantic_benchmark_cleanup_uses_admin_boundary_and_covers_outbox():
+    source = (ROOT / "scripts" / "benchmark_semantic_production.py").read_text(
+        encoding="utf-8"
+    )
+    assert '"DECISIONVAULT_CLEANUP_DATABASE_URL", runtime_database_url' in source
+    assert "cleanup_connection_factory = psycopg_connection_factory(" in source
+    assert "DELETE FROM decision_memory_consolidation_outbox" in source
+    assert "_delete_prefix(cleanup_connection_factory, run_prefix)" in source

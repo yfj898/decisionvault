@@ -15,17 +15,32 @@ Baseline:
 8 tests PASS
 
 Current local verification:
-198 tests PASS
+200 tests PASS
 Governed Adaptive Memory v7 local hardening: PASS
+Governed Adaptive Memory v7 production cutover: PASS
 Signing-key ID + retained verification keyring / legacy-keyless compatibility: PASS
+Real hosted signing-key rotation: r1 → r2 / 2 retained verification keys / post-rotation readiness HTTP 200
 Durable consolidation outbox / lease / exponential retry: PASS
 Distinct runtime vs consolidator CockroachDB identity contract: PASS
 PRIVATE / TEAM / GLOBAL server-owned memory-scope control: PASS
 Memory-health EMF + EventBridge/CloudWatch provisioning contracts: PASS
-Real CockroachDB v7 expand migration: PASS (9 statements / generation-safe outbox + consolidator role / no runtime REVOKE yet)
-Production v7 cutover: BLOCKED SAFELY on governance-authorized Secrets Manager update; current deployed v6 remains unchanged
+Real CockroachDB v7 expand migration: PASS (9 statements / generation-safe outbox + consolidator role)
+Lambda v7 deployment: Active / Successful / deployed package CodeSha256 matched
+Hosted v7 `/health/ready`: HTTP 200 / consolidator DB=True / identity isolated=True / outbox schema=True / scope control=True / errors=[]
+Real CockroachDB v7 contract migration: PASS (7 statements / runtime candidate+L2+support writes revoked / L3 INSERT+DELETE revoked)
+Post-contract runtime outbox authority: SELECT+INSERT+UPDATE only / no DELETE
+Post-contract consolidator adaptive authority: full DML on candidate/L2/L3/support + outbox completion
+Hosted v7 `/demo`: HTTP 200 / expected change=True / cross-agent memory=True / cleaned
+Hosted v7 `/governance-demo`: HTTP 200 / `CONFLICT_ABSTAIN` / executable=false / cleaned
+EventBridge consolidation retry: ENABLED / rate(5 minutes) / 1 Lambda target / invoke permission present
+CloudWatch memory operations: 3 alarms / 4-widget dashboard PASS
+Real durable retry smoke: runtime enqueue → scheduled Lambda claim=1 → consolidator completed=1 / deferred=0 / cleanup=0
+Post-v7 production semantic benchmark: 14/14 PASS
+Post-v7 adaptive adversarial/concurrency smoke: 13/13 PASS with runtime L1 + consolidator L2/L3 + admin cleanup identities
+V7 test-cleanup outbox gap found and fixed: initial 22 test-only PENDING obligations → final rerun outbox=0
+Post-v7 production memory rows: episodes=0 / heads=0 / revocations=0 / candidates=0 / strategy-stats=0 / governed-memories=0 / support=0 / outbox=0
 Post-adaptive Phase 8 local benchmark: 56/56 PASS
-GitHub Actions run `31792492469` (`5e5c3f0`): SUCCESS after CI pytest root-import parity fix
+GitHub Actions run `31795994868` (`91ac96b`): SUCCESS for v7 hardening base commit
 Governed Adaptive Memory v6 local implementation: PASS
 L0 request-local Working Memory: PASS
 L1 governed DecisionEpisode/current-head evidence remains authoritative: PASS

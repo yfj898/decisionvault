@@ -27,6 +27,36 @@ def _delete_prefix(connection_factory, prefix: str) -> None:
     try:
         with conn.cursor() as cur:
             cur.execute(
+                "DELETE FROM decision_memory_consolidation_outbox WHERE scope_id LIKE %s",
+                (f"{prefix}%",),
+            )
+            cur.execute(
+                """
+                DELETE FROM decision_governed_memory_support
+                WHERE memory_id IN (
+                    SELECT memory_id FROM decision_governed_memories
+                    WHERE scope_id LIKE %s
+                )
+                """,
+                (f"{prefix}%",),
+            )
+            cur.execute(
+                "DELETE FROM decision_governed_memories WHERE scope_id LIKE %s",
+                (f"{prefix}%",),
+            )
+            cur.execute(
+                "DELETE FROM decision_memory_consolidation_candidates WHERE scope_id LIKE %s",
+                (f"{prefix}%",),
+            )
+            cur.execute(
+                "DELETE FROM decision_strategy_effectiveness WHERE scope_id LIKE %s",
+                (f"{prefix}%",),
+            )
+            cur.execute(
+                "DELETE FROM decision_memory_revocations WHERE scope_id LIKE %s",
+                (f"{prefix}%",),
+            )
+            cur.execute(
                 "DELETE FROM decision_memory_heads WHERE scope_id LIKE %s",
                 (f"{prefix}%",),
             )
@@ -51,11 +81,18 @@ def main() -> int:
     api_key = os.getenv("NVIDIA_API_KEY", "").strip()
     if not api_key:
         raise SystemExit("NVIDIA_API_KEY is required")
-    if not os.getenv("DATABASE_URL"):
+    runtime_database_url = os.getenv("DATABASE_URL", "").strip()
+    cleanup_database_url = os.getenv(
+        "DECISIONVAULT_CLEANUP_DATABASE_URL", runtime_database_url
+    ).strip()
+    if not runtime_database_url:
         raise SystemExit("DATABASE_URL is required")
+    if not cleanup_database_url:
+        raise SystemExit("DECISIONVAULT_CLEANUP_DATABASE_URL is required")
 
     run_prefix = f"semantic-prod-{uuid4().hex[:10]}"
-    connection_factory = psycopg_connection_factory()
+    connection_factory = psycopg_connection_factory(runtime_database_url)
+    cleanup_connection_factory = psycopg_connection_factory(cleanup_database_url)
     semantic = NvidiaSemanticEmbedder(
         api_key=api_key,
         revision=os.getenv("NVIDIA_EMBED_REVISION", "").strip(),
@@ -76,7 +113,7 @@ def main() -> int:
         )
     )
     results = []
-    _delete_prefix(connection_factory, run_prefix)
+    _delete_prefix(cleanup_connection_factory, run_prefix)
     try:
         for case_index, case in enumerate(production_semantic_cases()):
             query_scope = f"{run_prefix}-{case.case_id}"
@@ -198,7 +235,7 @@ def main() -> int:
             return 2
         return 0
     finally:
-        _delete_prefix(connection_factory, run_prefix)
+        _delete_prefix(cleanup_connection_factory, run_prefix)
 
 
 if __name__ == "__main__":

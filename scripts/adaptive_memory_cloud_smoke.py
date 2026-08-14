@@ -24,6 +24,10 @@ def _delete_prefix(connection_factory, prefix: str) -> None:
     try:
         with conn.cursor() as cur:
             cur.execute(
+                "DELETE FROM decision_memory_consolidation_outbox WHERE scope_id LIKE %s",
+                (f"{prefix}%",),
+            )
+            cur.execute(
                 """
                 DELETE FROM decision_governed_memory_support
                 WHERE memory_id IN (
@@ -64,6 +68,7 @@ def _delete_prefix(connection_factory, prefix: str) -> None:
 
 def _remaining_rows(connection_factory, prefix: str) -> dict[str, int]:
     tables = (
+        "decision_memory_consolidation_outbox",
         "decision_memory_consolidation_candidates",
         "decision_strategy_effectiveness",
         "decision_governed_memories",
@@ -208,11 +213,16 @@ def main() -> int:
     api_key = os.getenv("NVIDIA_API_KEY", "").strip()
     revision = os.getenv("NVIDIA_EMBED_REVISION", "").strip()
     runtime_database_url = os.getenv("DATABASE_URL", "").strip()
+    consolidation_database_url = os.getenv(
+        "CONSOLIDATION_DATABASE_URL", runtime_database_url
+    ).strip()
     cleanup_database_url = os.getenv(
         "DECISIONVAULT_CLEANUP_DATABASE_URL", runtime_database_url
     ).strip()
     if not runtime_database_url:
         raise SystemExit("DATABASE_URL is required")
+    if not consolidation_database_url:
+        raise SystemExit("CONSOLIDATION_DATABASE_URL is required")
     if not cleanup_database_url:
         raise SystemExit("DECISIONVAULT_CLEANUP_DATABASE_URL is required")
     if not api_key:
@@ -222,6 +232,14 @@ def main() -> int:
 
     connection_factory = psycopg_connection_factory(
         runtime_database_url,
+        statement_timeout_ms=20000,
+    )
+    # v7 deliberately splits adaptive authority from the request runtime:
+    # runtime writes L1/current heads and invalidates stale L3, while the
+    # consolidator owns candidate/L2/L3 promotion writes. Keep the cloud smoke
+    # on that same production boundary instead of widening runtime privileges.
+    consolidation_connection_factory = psycopg_connection_factory(
+        consolidation_database_url,
         statement_timeout_ms=20000,
     )
     # Production business operations deliberately use the least-privilege
@@ -247,7 +265,7 @@ def main() -> int:
         semantic_embedding_space=semantic.embedding_space,
     )
     service = CockroachMemoryConsolidationService(
-        connection_factory=connection_factory,
+        connection_factory=consolidation_connection_factory,
         semantic_embedder=semantic.embed_passage,
         semantic_embedding_space=semantic.embedding_space,
     )
