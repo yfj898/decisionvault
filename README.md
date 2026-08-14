@@ -156,6 +156,16 @@ thresholds. The first real production sample is intentionally reported as
 is in `docs/evidence/MEMORY_QUALITY_TELEMETRY_V1.md` and
 `reports/memory-telemetry-calibration.json`.
 
+That telemetry now feeds a durable **calibration-review loop**. Aggregate
+champion/challenger runs are append-only in CockroachDB, and the existing
+production consolidation Scheduled Event performs a persisted 24-hour due-check
+before running the evaluator. No second scheduler and no threshold-mutation
+authority are introduced. Promotion remains a separate human/source-code/CI
+operation; the current real sample count is still `1 / 30`, so the latest
+promotion review is `NO_PROMOTION` and the champion is unchanged. Production
+evidence is in `docs/evidence/MEMORY_CALIBRATION_LOOP_V2.md` and
+`reports/memory-calibration-promotion-review.json`.
+
 Verified competition integrations:
 
 - CockroachDB Distributed Vector Indexing

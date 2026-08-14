@@ -15,7 +15,17 @@ Baseline:
 8 tests PASS
 
 Current local verification:
-217 tests PASS
+224 tests PASS
+Memory calibration loop v2: PRODUCTION PASS / champion unchanged
+V9 aggregate calibration schema: 4 statements PASS / runtime SELECT+INSERT only / consolidator SELECT only
+Persisted production calibration run: decision rows=2 / labeled outcomes=2 / memory-exposed observed=1 / INSUFFICIENT_REAL_TELEMETRY
+Promotion review: NO_PROMOTION / automatic threshold mutation=false / required real sample floor=30
+Durable calibration cadence: existing consolidation Scheduled Event + persisted 24h due-check / no second EventBridge rule required
+V9 hosted readiness: HTTP 200 / telemetry schema=True / calibration schema=True / calibration config=True / identity isolated=True / errors=0
+Post-v9 production semantic benchmark with concurrent security reconciliation: 14/14 PASS
+Post-v9 adaptive CockroachDB+NVIDIA adversarial/concurrency smoke: 13/13 PASS / cleanup 0
+Post-v9 hosted demo/governance: PASS / final business memory rows=0 / quality telemetry retained 2+2 / calibration runs=1
+GitHub Actions run `31808893606` (`309ab37`): SUCCESS for calibration-loop source commit
 Real memory-quality telemetry calibration v1: PRODUCTION PIPELINE PASS / threshold change correctly withheld at N=1 memory-exposed verified outcome
 CockroachDB v8 telemetry: append-only decision + verified-outcome tables / runtime SELECT+INSERT only / no UPDATE+DELETE
 Telemetry privacy boundary: no raw situation/scope/agent/episode/memory identifiers inside quality_features; aggregate report privacy scan PASS
