@@ -215,6 +215,8 @@ reproducibly.
   producer supersede its own current governed memory head.
 - Dedicated least-privilege CockroachDB runtime identity; schema DDL remains a
   separate migration/admin responsibility.
+- Dedicated non-root AWS deployer identity restricted to the existing
+  DecisionVault Lambda Get/Update operations.
 - Real AWS Lambda judge-facing application.
 - One-click Memory OFF vs Memory ON causal proof.
 - Systematic benchmark showing benefit, false-influence, isolation, and model-

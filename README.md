@@ -435,6 +435,12 @@ by the current application (`SELECT/INSERT/DELETE` on immutable episodes and
 migrations use a separately retained admin connection outside the Lambda
 environment.
 
+Routine AWS Lambda updates also use a dedicated `decisionvault-deployer` IAM
+identity whose policy is scoped to Get/Update operations on the existing
+`decisionvault-agent` function. IAM administration is denied. Initial AWS
+bootstrap still required a privileged account; the restricted deployer is used
+for subsequent routine releases.
+
 Never commit:
 
 - CockroachDB connection strings

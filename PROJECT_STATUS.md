@@ -143,3 +143,6 @@ Runtime schema CREATE denied with `InsufficientPrivilege`: PASS
 Migration-admin schema CREATE preserved separately: PASS
 Lambda switched to least-privilege CockroachDB runtime identity: PASS
 Least-privilege hosted app regression: PASS
+Dedicated non-root AWS `decisionvault-deployer` identity: PASS
+Restricted deployer Lambda code/configuration update: PASS
+Restricted deployer IAM administration probe: AccessDenied
