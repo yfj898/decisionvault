@@ -42,6 +42,14 @@ CREATE TABLE IF NOT EXISTS decision_memory_heads (
     PRIMARY KEY (scope_id, producer_agent_id, strategy)
 );
 
+CREATE TABLE IF NOT EXISTS decision_rate_limits (
+    principal_id STRING NOT NULL,
+    route_group STRING NOT NULL,
+    bucket_epoch INT8 NOT NULL,
+    request_count INT8 NOT NULL CHECK (request_count > 0),
+    PRIMARY KEY (principal_id, route_group, bucket_epoch)
+);
+
 -- Nearest-neighbor query used by the adapter:
 -- SELECT ..., (embedding <=> $query_vector::VECTOR) AS distance
 -- FROM decision_episodes

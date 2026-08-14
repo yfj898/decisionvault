@@ -279,11 +279,12 @@ temporary agent rows                0 heads / 0 episodes
 The P0 remediation does **not** claim that the following production concerns are
 fully solved:
 
-- outcome labels are still supplied by the upstream application contract rather
-  than cryptographically/transactionally bound to an execution receipt;
+- the verified execution path uses a deterministic DecisionVault payment-recovery
+  sandbox and signed receipt contract; it is not a real external payment network;
 - the token-grant layer is a compact hackathon authorization mechanism, not
   enterprise IAM;
-- large-scale concurrent writer, retry, rate-limit, and load evidence remains a
-  future production-hardening task.
+- concurrency, retry, provider-degradation, and distributed rate-limit boundaries
+  have bounded live evidence, but sustained high-RPS / long-duration soak testing
+  remains future production-hardening work.
 
 Those items must not be represented in the Devpost submission as already solved.

@@ -27,6 +27,7 @@ from decisionvault.memory.embedding import (
 )
 from decisionvault.observability import emit_request_metric
 from decisionvault.providers.nvidia import NvidiaDecisionAdvisor
+from decisionvault.rate_limit import CockroachRateLimiter
 from decisionvault.runtime_secrets import hydrate_runtime_secrets
 from decisionvault.ui import INDEX_HTML
 
@@ -60,10 +61,24 @@ class SupersessionConflict(Exception):
     """The requested correction targets a non-current or concurrently replaced head."""
 
 
-def _json_response(status_code: int, payload: dict[str, Any]) -> dict[str, Any]:
+class RateLimitExceeded(Exception):
+    def __init__(self, retry_after_seconds: int) -> None:
+        super().__init__("rate limit exceeded")
+        self.retry_after_seconds = retry_after_seconds
+
+
+def _json_response(
+    status_code: int,
+    payload: dict[str, Any],
+    *,
+    headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    response_headers = {"content-type": "application/json", **SECURITY_HEADERS}
+    if headers:
+        response_headers.update(headers)
     return {
         "statusCode": status_code,
-        "headers": {"content-type": "application/json", **SECURITY_HEADERS},
+        "headers": response_headers,
         "body": json.dumps(payload, separators=(",", ":")),
     }
 
@@ -621,6 +636,21 @@ def _record(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
     }
 
 
+def _enforce_rate_limit(
+    *,
+    principal_id: str,
+    route_group: str,
+    limit: int,
+) -> None:
+    decision = CockroachRateLimiter(psycopg_connection_factory()).check(
+        principal_id=principal_id,
+        route_group=route_group,
+        limit=limit,
+    )
+    if not decision.allowed:
+        raise RateLimitExceeded(decision.retry_after_seconds)
+
+
 def _handle_request(event: dict[str, Any], _context: Any) -> dict[str, Any]:
     try:
         method = (
@@ -656,6 +686,11 @@ def _handle_request(event: dict[str, Any], _context: Any) -> dict[str, Any]:
                 return _json_response(403, {"error": "forbidden"})
             if "agent_id" in body:
                 return _json_response(400, {"error": "agent_id_is_server_bound"})
+            _enforce_rate_limit(
+                principal_id=grant.agent_id,
+                route_group="agent-api",
+                limit=int(os.getenv("AGENT_RATE_LIMIT_PER_MINUTE", "60")),
+            )
             return _json_response(200, _decide(body, agent_id=grant.agent_id))
         if method == "POST" and path == "/execute":
             scope_id = str(body.get("scope_id", "")).strip()
@@ -670,6 +705,11 @@ def _handle_request(event: dict[str, Any], _context: Any) -> dict[str, Any]:
                 return _json_response(403, {"error": "forbidden"})
             if "agent_id" in body:
                 return _json_response(400, {"error": "agent_id_is_server_bound"})
+            _enforce_rate_limit(
+                principal_id=grant.agent_id,
+                route_group="agent-api",
+                limit=int(os.getenv("AGENT_RATE_LIMIT_PER_MINUTE", "60")),
+            )
             return _json_response(200, _execute(body, agent_id=grant.agent_id))
         if method == "POST" and path == "/record":
             scope_id = str(body.get("scope_id", "")).strip()
@@ -684,16 +724,40 @@ def _handle_request(event: dict[str, Any], _context: Any) -> dict[str, Any]:
                 return _json_response(403, {"error": "forbidden"})
             if "agent_id" in body:
                 return _json_response(400, {"error": "agent_id_is_server_bound"})
+            _enforce_rate_limit(
+                principal_id=grant.agent_id,
+                route_group="agent-api",
+                limit=int(os.getenv("AGENT_RATE_LIMIT_PER_MINUTE", "60")),
+            )
             return _json_response(201, _record(body, agent_id=grant.agent_id))
         if method == "POST" and path == "/demo":
             if not _demo_authorized(event):
                 return _json_response(401, {"error": "unauthorized"})
+            _enforce_rate_limit(
+                principal_id="judge-demo",
+                route_group="judge-demo",
+                limit=int(os.getenv("DEMO_RATE_LIMIT_PER_MINUTE", "10")),
+            )
             return _json_response(200, _demo())
         if method == "POST" and path == "/governance-demo":
             if not _demo_authorized(event):
                 return _json_response(401, {"error": "unauthorized"})
+            _enforce_rate_limit(
+                principal_id="judge-demo",
+                route_group="judge-demo",
+                limit=int(os.getenv("DEMO_RATE_LIMIT_PER_MINUTE", "10")),
+            )
             return _json_response(200, _governance_demo())
         return _json_response(404, {"error": "not_found"})
+    except RateLimitExceeded as exc:
+        return _json_response(
+            429,
+            {
+                "error": "rate_limited",
+                "retry_after_seconds": exc.retry_after_seconds,
+            },
+            headers={"retry-after": str(exc.retry_after_seconds)},
+        )
     except SupersessionConflict as exc:
         return _json_response(409, {"error": "conflict", "detail": str(exc)})
     except (ValueError, TypeError, json.JSONDecodeError) as exc:

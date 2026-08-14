@@ -21,6 +21,7 @@ def _configure_agent(monkeypatch, *, token="agent-token", permission="decide"):
             }
         ),
     )
+    monkeypatch.setattr(aws_lambda, "_enforce_rate_limit", lambda **_kwargs: None)
     return token
 
 
@@ -41,7 +42,32 @@ def _configure_executor(monkeypatch, *, token="executor-token"):
     monkeypatch.setenv(
         "EXECUTION_RECEIPT_SECRET", "test-execution-receipt-secret-123"
     )
+    monkeypatch.setattr(aws_lambda, "_enforce_rate_limit", lambda **_kwargs: None)
     return token
+
+
+def test_rate_limit_response_is_429_with_retry_after(monkeypatch):
+    token = _configure_agent(monkeypatch)
+
+    def limited(**_kwargs):
+        raise aws_lambda.RateLimitExceeded(17)
+
+    monkeypatch.setattr(aws_lambda, "_enforce_rate_limit", limited)
+    response = aws_lambda.lambda_handler(
+        {
+            "requestContext": {"http": {"method": "POST"}},
+            "rawPath": "/decide",
+            "headers": {"X-DecisionVault-Agent-Token": token},
+            "body": json.dumps(
+                {"scope_id": "demo", "situation": "payment failed again"}
+            ),
+        },
+        None,
+    )
+    body = json.loads(response["body"])
+    assert response["statusCode"] == 429
+    assert response["headers"]["retry-after"] == "17"
+    assert body == {"error": "rate_limited", "retry_after_seconds": 17}
 
 
 class StubAgent:

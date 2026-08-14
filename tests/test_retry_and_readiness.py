@@ -94,6 +94,14 @@ class ReadyEmbedder:
         return [0.0] * 1024
 
 
+class FailingEmbedder:
+    def __init__(self, **_kwargs):
+        pass
+
+    def embed_query(self, _text):
+        raise RuntimeError("embedding provider unavailable")
+
+
 def test_readiness_checks_secret_database_and_embedding(monkeypatch):
     aws_lambda._READINESS_CACHE = None
     monkeypatch.setattr(aws_lambda, "hydrate_runtime_secrets", lambda: None)
@@ -112,6 +120,27 @@ def test_readiness_checks_secret_database_and_embedding(monkeypatch):
     assert payload["database"] is True
     assert payload["semantic_embedding"] is True
     assert payload["advisor_required_for_readiness"] is False
+
+
+def test_readiness_fails_closed_when_semantic_embedding_is_unavailable(monkeypatch):
+    aws_lambda._READINESS_CACHE = None
+    monkeypatch.setattr(aws_lambda, "hydrate_runtime_secrets", lambda: None)
+    monkeypatch.setattr(
+        aws_lambda,
+        "psycopg_connection_factory",
+        lambda: (lambda: ReadyConnection()),
+    )
+    monkeypatch.setattr(aws_lambda, "NvidiaSemanticEmbedder", FailingEmbedder)
+    monkeypatch.setenv("NVIDIA_API_KEY", "test")
+
+    status, payload = aws_lambda._readiness()
+
+    assert status == 503
+    assert payload["status"] == "not_ready"
+    assert payload["database"] is True
+    assert payload["semantic_embedding"] is False
+    assert payload["advisor_required_for_readiness"] is False
+    assert payload["errors"]
 
 
 def test_readiness_cache_avoids_repeated_external_probe(monkeypatch):

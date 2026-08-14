@@ -255,6 +255,8 @@ ANN candidate generation has already hidden.
 - Add richer operational metrics around recall quality and memory drift.
 - Replace the hackathon token grant mechanism with an enterprise identity / IAM
   integration and centrally managed secrets.
+- Run sustained high-RPS / long-duration soak tests beyond the bounded concurrent
+  replay, supersession, provider-degradation, and distributed rate-limit proofs.
 
 ## Built with
 

@@ -311,6 +311,16 @@ demo token, CSP, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and
 `Cache-Control: no-store`. Headless Chrome DOM smoke passed at desktop and mobile
 viewport sizes. See `docs/evidence/PHASE7_UI_PRODUCTION_HARDENING.md`.
 
+The later final red-team pass also added verified execution receipts with
+idempotent replay, typed race-safe supersession, least-privilege database and AWS
+deployment identities, AWS Secrets Manager runtime secrets, real liveness /
+readiness probes, CockroachDB serialization retry, CloudWatch EMF metrics, and a
+CockroachDB-backed per-principal rate limiter. Concurrent receipt/supersession,
+semantic-provider degradation, and bounded overload cases were exercised against
+the hosted runtime. See
+`docs/evidence/CONCURRENCY_DEGRADATION_RATE_LIMIT.md` and the other final
+red-team evidence files.
+
 ## Phase 8 — Memory benchmark and ablation
 
 DecisionVault now includes a reproducible behavioral benchmark that compares the

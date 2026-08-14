@@ -15,7 +15,7 @@ Baseline:
 8 tests PASS
 
 Current local verification:
-73 tests PASS
+77 tests PASS
 CockroachDB Cloud persistence smoke: PASS
 Fresh-process recall changed agent behavior: PASS
 Memory-off causal baseline: PASS
@@ -168,4 +168,12 @@ CloudWatch `DecisionVault` metric namespace: PASS
 CloudWatch request/error/latency metrics materialized: PASS
 CloudWatch memory-influence/conflict/idempotent-replay metrics materialized: PASS
 Observability sensitive/high-cardinality field scan: PASS
-Public GitHub Actions deterministic CI workflow: READY FOR FIRST RUN
+Public GitHub Actions deterministic CI workflow: PASS
+GitHub Actions run `31767363853` (`b539b3e`): SUCCESS
+CI deterministic tests / whitespace / tracked credential-shape scan: PASS
+Concurrent execution-receipt replay: 10/10 HTTP 201 → 1 episode, 9 idempotent replays PASS
+Concurrent typed supersession: HTTP 201 + HTTP 409 → 1 successor / 1 head PASS
+Live semantic-provider degradation: readiness 503 → restore 200 PASS
+CockroachDB distributed rate-limit table / runtime DML grants: PASS
+Hosted application limiter: 4 concurrent at limit=2 → 2×200 + 2×429 + 0×5xx PASS
+Rate-limit `Retry-After` header / response body: PASS
