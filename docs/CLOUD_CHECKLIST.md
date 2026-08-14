@@ -66,4 +66,4 @@ bounded explanation and AWS Lambda for the required AWS deployment.
   and Cloud Managed MCP.
 - [x] AWS Lambda is demonstrably running.
 - [x] Public GitHub repository and MIT license are available.
-- [ ] Final <3 minute public video and Devpost submission remain Phase 9 work.
+- [ ] Final <3 minute public video and Devpost submission remain Phase 9 work; the hosted single-page evidence UI is deployed and the 1920×1080 recording automation passed its compressed functional dry-run.

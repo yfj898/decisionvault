@@ -117,6 +117,10 @@ def test_root_serves_judge_ui_without_embedding_demo_token(monkeypatch):
     assert response["headers"]["x-frame-options"] == "DENY"
     assert "Memory OFF" in response["body"]
     assert "Memory ON" in response["body"]
+    assert "Reproducible submission evidence" in response["body"]
+    assert "semantic_embedding VECTOR(1024)" in response["body"]
+    assert "decision_memory_heads_scope_semantic_vec_idx" in response["body"]
+    assert "12/12" in response["body"]
     assert "do-not-embed-this" not in response["body"]
 
 

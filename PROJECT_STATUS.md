@@ -9,13 +9,17 @@ Phase 5 — Bounded model integration (NVIDIA live; Bedrock optional): PASS
 Phase 6 — AWS Lambda deployment: PASS
 Phase 7 — UI / production hardening: PASS
 Phase 8 — Benchmark / ablation: PASS
-Phase 9 — Demo / Devpost submission: PENDING
+Phase 9 — Demo / Devpost submission: READY FOR RECORDING (final video + submit pending)
 
 Baseline:
 8 tests PASS
 
 Current local verification:
 77 tests PASS
+Phase 9 single-page DVI / MCP / benchmark evidence UI: PASS
+Phase 9 1920×1080 real-click recording automation: READY
+Phase 9 hosted evidence panel deployment: PASS
+Phase 9 compressed 1920×1080 Xvfb functional dry-run: PASS
 CockroachDB Cloud persistence smoke: PASS
 Fresh-process recall changed agent behavior: PASS
 Memory-off causal baseline: PASS

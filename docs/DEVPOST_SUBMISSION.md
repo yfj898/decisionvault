@@ -343,10 +343,26 @@ Narrate only what appears:
 - Point to `producer_agents=recovery-observer`.
 - Point to the cleanup PASS banner.
 
-### 1:28–1:48 — CockroachDB memory layer
+### 1:28–1:56 — Conflict safety proof
 
-Show the current production semantic schema / DVI evidence or terminal capture
-with:
+Click **Run conflict safety proof** and point to:
+
+```text
+Agent A outcome conflicts with Agent B outcome
+→ Agent C
+→ resolution=CONFLICT_ABSTAIN
+→ strategy=GENERIC_RETRY
+→ memory_conflict=true, memory_influenced=false
+```
+
+`CONFLICT_ABSTAIN` is the memory-resolution state: the policy refuses to let
+contradictory memory override the deterministic fallback strategy.
+
+### 1:56–2:28 — Production evidence
+
+After the live causal and conflict proofs, scroll to the judge UI's static
+**Reproducible submission evidence** panel. Show the current production semantic
+schema / DVI evidence with:
 
 ```text
 semantic_embedding VECTOR(1024)
@@ -357,22 +373,10 @@ vector search
 Mention that immutable episodes remain in `decision_episodes`, while governed
 current heads prevent duplicate candidate crowding. The Memory Auditor Agent can
 also inspect the memory/provenance and vector plan through CockroachDB Cloud
-Managed MCP.
+Managed MCP. The same panel contains the frozen benchmark numbers, so the video
+does not need to switch to a terminal or a second browser tab.
 
-### 1:48–2:10 — Conflict safety proof
-
-Click **Run conflict safety proof** and point to:
-
-```text
-Agent A outcome conflicts with Agent B outcome
-→ Agent C
-→ CONFLICT_ABSTAIN
-→ memory_conflict=true
-```
-
-### 2:10–2:28 — Benchmark
-
-Show only the most important four numbers:
+Show only the most important benchmark numbers:
 
 ```text
 Benefit target accuracy: ON 100% / OFF 0%
@@ -386,7 +390,7 @@ Clarify that the `56/56` and `28/28` figures are deterministic regression/
 causal-ablation results, while `12/12` is the separate native-1024D production
 semantic suite.
 
-### 2:28–2:42 — Close
+### 2:28–2:40 — Close
 
 End with:
 
