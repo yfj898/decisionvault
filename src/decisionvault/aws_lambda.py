@@ -7,7 +7,11 @@ from typing import Any
 from uuid import uuid4
 
 from decisionvault.agent.engine import DecisionAgent
-from decisionvault.agent.memory_governance import ConflictAwareMemoryResolver
+from decisionvault.agent.auth import AgentGrant, authenticate_agent, load_agent_grants
+from decisionvault.agent.memory_governance import (
+    PRODUCTION_SEMANTIC_MIN_SIMILARITY,
+    ConflictAwareMemoryResolver,
+)
 from decisionvault.agent.policy import OutcomeAwarePolicy
 from decisionvault.domain import Decision, Outcome, Strategy
 from decisionvault.memory.cockroach import CockroachVectorMemoryStore
@@ -78,7 +82,7 @@ def _request_body(event: dict[str, Any]) -> dict[str, Any]:
     return parsed
 
 
-def _authorized(event: dict[str, Any]) -> bool:
+def _demo_authorized(event: dict[str, Any]) -> bool:
     expected = os.getenv("DEMO_API_TOKEN", "").strip()
     if not expected:
         return True
@@ -89,19 +93,46 @@ def _authorized(event: dict[str, Any]) -> bool:
     return headers.get("x-decisionvault-token", "") == expected
 
 
+def _agent_grants() -> dict[str, AgentGrant]:
+    return load_agent_grants(os.getenv("AGENT_AUTH_JSON", ""))
+
+
+def _agent_token(event: dict[str, Any]) -> str:
+    headers = {
+        str(key).lower(): str(value)
+        for key, value in (event.get("headers") or {}).items()
+    }
+    return headers.get("x-decisionvault-agent-token", "")
+
+
+def _authenticate_request_agent(
+    event: dict[str, Any],
+    *,
+    permission: str,
+    scope_id: str,
+) -> AgentGrant | None:
+    return authenticate_agent(
+        token=_agent_token(event),
+        grants=_agent_grants(),
+        permission=permission,
+        scope_id=scope_id,
+    )
+
+
 def _producer_trust_registry() -> dict[str, float]:
-    raw = os.getenv("AGENT_TRUST_JSON", "").strip()
-    if not raw:
-        return {}
-    parsed = json.loads(raw)
-    if not isinstance(parsed, dict):
-        raise ValueError("AGENT_TRUST_JSON must be a JSON object")
-    registry: dict[str, float] = {}
-    for agent_id, value in parsed.items():
-        trust = float(value)
-        if not 0.0 <= trust <= 1.0:
-            raise ValueError("agent trust values must be between 0 and 1")
-        registry[str(agent_id)] = trust
+    registry = {
+        grant.agent_id: grant.trust
+        for grant in _agent_grants().values()
+    }
+    # These identities are server-owned by the atomic judge demos and cannot be
+    # supplied through the public /record or /decide APIs.
+    registry.update(
+        {
+            "recovery-observer": 1.0,
+            "recovery-observer-a": 1.0,
+            "recovery-observer-b": 1.0,
+        }
+    )
     return registry
 
 
@@ -124,8 +155,9 @@ def _build_agent(
         )
         store = CockroachVectorMemoryStore(
             connection_factory=psycopg_connection_factory(),
-            embedder=semantic.embed_passage,
-            query_embedder=semantic.embed_query,
+            embedder=deterministic_text_embedding,
+            semantic_embedder=semantic.embed_passage,
+            semantic_query_embedder=semantic.embed_query,
         )
     else:
         store = CockroachVectorMemoryStore(
@@ -148,7 +180,8 @@ def _build_agent(
         memory=store,
         policy=OutcomeAwarePolicy(
             resolver=ConflictAwareMemoryResolver(
-                producer_trust=_producer_trust_registry()
+                minimum_similarity=PRODUCTION_SEMANTIC_MIN_SIMILARITY,
+                producer_trust=_producer_trust_registry(),
             )
         ),
         memory_enabled=memory_enabled,
@@ -161,6 +194,10 @@ def _delete_scope(scope_id: str) -> None:
     conn = psycopg_connection_factory()()
     try:
         with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM decision_memory_heads WHERE scope_id = %s",
+                (scope_id,),
+            )
             cur.execute(
                 "DELETE FROM decision_episodes WHERE scope_id = %s",
                 (scope_id,),
@@ -181,14 +218,13 @@ def _health() -> dict[str, Any]:
     }
 
 
-def _decide(body: dict[str, Any]) -> dict[str, Any]:
+def _decide(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
     scope_id = str(body.get("scope_id", "")).strip()
     situation = str(body.get("situation", "")).strip()
     if not scope_id or not situation:
         raise ValueError("scope_id and situation are required")
 
     memory_enabled = bool(body.get("memory_enabled", True))
-    agent_id = str(body.get("agent_id", "recovery-planner")).strip()
     decision = _build_agent(memory_enabled=memory_enabled, agent_id=agent_id).decide(
         scope_id=scope_id,
         situation=situation,
@@ -314,7 +350,7 @@ def _governance_demo() -> dict[str, Any]:
     return result
 
 
-def _record(body: dict[str, Any]) -> dict[str, Any]:
+def _record(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
     scope_id = str(body.get("scope_id", "")).strip()
     situation = str(body.get("situation", "")).strip()
     if not scope_id or not situation:
@@ -324,7 +360,6 @@ def _record(body: dict[str, Any]) -> dict[str, Any]:
     outcome = Outcome(str(body.get("outcome", "")))
     effectiveness = float(body.get("effectiveness"))
     confidence = float(body.get("confidence", 1.0))
-    agent_id = str(body.get("agent_id", "recovery-observer")).strip()
     evidence: dict[str, str] = {}
     supersedes_episode_id = str(body.get("supersedes_episode_id", "")).strip()
     if supersedes_episode_id:
@@ -365,17 +400,42 @@ def lambda_handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
         if method == "GET" and path == "/health":
             return _json_response(200, _health())
 
-        if method == "POST" and not _authorized(event):
-            return _json_response(401, {"error": "unauthorized"})
-
         body = _request_body(event)
         if method == "POST" and path == "/decide":
-            return _json_response(200, _decide(body))
+            scope_id = str(body.get("scope_id", "")).strip()
+            if not scope_id:
+                return _json_response(
+                    400, {"error": "bad_request", "detail": "scope_id is required"}
+                )
+            grant = _authenticate_request_agent(
+                event, permission="decide", scope_id=scope_id
+            )
+            if grant is None:
+                return _json_response(403, {"error": "forbidden"})
+            if "agent_id" in body:
+                return _json_response(400, {"error": "agent_id_is_server_bound"})
+            return _json_response(200, _decide(body, agent_id=grant.agent_id))
         if method == "POST" and path == "/record":
-            return _json_response(201, _record(body))
+            scope_id = str(body.get("scope_id", "")).strip()
+            if not scope_id:
+                return _json_response(
+                    400, {"error": "bad_request", "detail": "scope_id is required"}
+                )
+            grant = _authenticate_request_agent(
+                event, permission="record", scope_id=scope_id
+            )
+            if grant is None:
+                return _json_response(403, {"error": "forbidden"})
+            if "agent_id" in body:
+                return _json_response(400, {"error": "agent_id_is_server_bound"})
+            return _json_response(201, _record(body, agent_id=grant.agent_id))
         if method == "POST" and path == "/demo":
+            if not _demo_authorized(event):
+                return _json_response(401, {"error": "unauthorized"})
             return _json_response(200, _demo())
         if method == "POST" and path == "/governance-demo":
+            if not _demo_authorized(event):
+                return _json_response(401, {"error": "unauthorized"})
             return _json_response(200, _governance_demo())
         return _json_response(404, {"error": "not_found"})
     except (ValueError, TypeError, json.JSONDecodeError) as exc:

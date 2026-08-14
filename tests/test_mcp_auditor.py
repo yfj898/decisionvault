@@ -8,6 +8,9 @@ def test_empty_notification_response_is_valid():
 
 
 class FakeMcpClient:
+    def __init__(self, *, semantic=False):
+        self.semantic = semantic
+
     def initialize(self):
         return {
             "result": {
@@ -29,6 +32,10 @@ class FakeMcpClient:
     def call_tool(self, name, arguments):
         assert arguments["database"] == "defaultdb"
         if name == "select_query":
+            expected_table = (
+                "decision_memory_heads" if self.semantic else "decision_episodes"
+            )
+            assert expected_table in arguments["query"]
             return {
                 "result": {
                     "content": [
@@ -43,14 +50,18 @@ class FakeMcpClient:
                 }
             }
         if name == "explain_query":
+            expected = (
+                "decision_memory_heads_scope_semantic_vec_idx"
+                if self.semantic
+                else "decision_episodes_scope_embedding_vec_idx"
+            )
             return {
                 "result": {
                     "content": [
                         {
                             "type": "text",
                             "text": (
-                                "vector search decision_episodes@"
-                                "decision_episodes_scope_embedding_vec_idx"
+                                "vector search " + expected
                             ),
                         }
                     ]
@@ -63,5 +74,14 @@ def test_memory_auditor_agent_checks_live_memory_contract():
     result = MemoryAuditorAgent(FakeMcpClient()).audit_scope(
         scope_id="shared-team",
         situation="payment failed after card replacement; token stale",
+    )
+    assert result.passed is True
+
+
+def test_memory_auditor_agent_checks_production_semantic_contract():
+    result = MemoryAuditorAgent(FakeMcpClient(semantic=True)).audit_scope(
+        scope_id="shared-team",
+        situation="replacement card checkout failure",
+        semantic_query_vector=[0.1, 0.9],
     )
     assert result.passed is True

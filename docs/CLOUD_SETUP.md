@@ -5,9 +5,13 @@
 1. Create a new CockroachDB Cloud cluster.
 2. Record the cluster ID.
 3. Create the DecisionVault schema using `scripts/bootstrap.sql`.
-4. Verify `decision_episodes.embedding` is a `VECTOR` column.
-5. Run a real nearest-neighbor query using cosine distance.
-6. Capture sanitized evidence for the submission.
+4. Verify the deterministic regression column
+   `decision_episodes.embedding VECTOR(64)`.
+5. Apply `scripts/semantic_memory.sql` and verify
+   `decision_memory_heads.semantic_embedding VECTOR(1024)` plus the semantic DVI.
+6. Run real cosine nearest-neighbor queries on both the historical regression
+   path and the production semantic path.
+7. Capture sanitized evidence for the submission.
 
 ### Phase 2 persistence smoke
 
@@ -30,8 +34,9 @@ The `recall` command constructs a fresh store and agent and must report
 `REFRESH_PAYMENT_TOKEN` with memory enabled and `GENERIC_RETRY` with memory disabled.
 
 The Phase 2 schema uses `VECTOR(64)` only for the deterministic hashing embedder.
-Treat that dimension as migration-ready: the Bedrock integration phase must update
-the schema and stored vectors to the selected model's real embedding dimension.
+That column remains intentionally frozen as regression evidence. Hosted semantic
+retrieval uses the separate native NVIDIA E5-v5 1024D schema applied by
+`scripts/semantic_memory.sql`; production does not project E5-v5 into 64D.
 
 ## Distributed Vector Index
 
@@ -55,6 +60,18 @@ uv run python scripts/vector_index_smoke.py
 The indexed ANN result is compared with a forced primary-index exact scan. Cloud
 evidence is recorded in `docs/evidence/PHASE3_DISTRIBUTED_VECTOR_INDEX.md`.
 
+The current production semantic index is:
+
+```sql
+CREATE VECTOR INDEX decision_memory_heads_scope_semantic_vec_idx
+ON decision_memory_heads (scope_id, semantic_embedding vector_cosine_ops);
+```
+
+`decision_memory_heads` contains one current row per
+`(scope_id, producer_agent_id, strategy)` so repeated writes from one producer do
+not crowd independent evidence out of ANN top-K. Immutable history remains in
+`decision_episodes`.
+
 ## Managed MCP Server
 
 Use the Cloud Console MCP configuration for the DecisionVault cluster.
@@ -76,34 +93,33 @@ Do not commit:
 Submission evidence should show the MCP server actually inspecting or querying
 DecisionVault memory, not merely being configured.
 
-## Amazon Bedrock
+## Optional Amazon Bedrock provider seam
 
-The Bedrock adapter is lazy-imported so local deterministic tests need no AWS
-dependency. The bounded advisor is non-authoritative: CockroachDB recall and the
-deterministic policy commit the strategy before Bedrock is called.
+Bedrock is **not** part of the frozen competition claim or judge path. The
+adapter remains lazy-imported as an optional provider seam. The actual verified
+competition model path uses NVIDIA for semantic embeddings and bounded
+explanation, while the AWS requirement is satisfied by the Lambda deployment.
 
-Recommended competition smoke:
+Optional experimental smoke only:
 
 ```bash
 export AWS_BEARER_TOKEN_BEDROCK="<Bedrock API key>"
 uv run python scripts/model_advisor_smoke.py bedrock --cloud-memory
 ```
 
-The default model is `amazon.nova-lite-v1:0` in `ap-northeast-1`. Standard AWS SDK
-credential sources (`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` or `AWS_PROFILE`)
-are also accepted. Never commit any of these values.
+Never treat this optional command as submission evidence unless a real successful
+Bedrock invocation is captured separately. Never commit AWS credentials.
 
-Minimum real evidence:
-- one successful model invocation
-- request metadata / AWS logs where available
-- the model output enters the untrusted decision layer
-- deterministic memory tests remain runnable offline
+The non-authoritative model boundary is already verified with NVIDIA: the memory
+policy commits strategy before the explanation provider is called.
 
 ## AWS deployment
 
-Prefer the smallest deployment that remains testable through judging:
+The frozen deployment is an AWS Lambda Python 3.12 function in
+`ap-northeast-1` using a Lambda Function URL. `GET /` and `/health` are public;
+the two atomic judge demos use `X-DecisionVault-Token`; general `/record` and
+`/decide` use `X-DecisionVault-Agent-Token` with server-side digest grants that
+bind identity, scope prefixes, permissions, and trust.
 
-- Lambda + API Gateway for a compact API, or
-- ECS for a containerized web demo.
-
-Do not add AWS services only to increase service count.
+Raw demo/agent tokens, database credentials, and NVIDIA keys must remain outside
+Git. See `.env.example` and `docs/AWS_LAMBDA_DEPLOY.md` for configuration names.

@@ -15,7 +15,7 @@ Baseline:
 8 tests PASS
 
 Current local verification:
-42 tests PASS
+51 tests PASS
 CockroachDB Cloud persistence smoke: PASS
 Fresh-process recall changed agent behavior: PASS
 Memory-off causal baseline: PASS
@@ -57,7 +57,7 @@ Unauthorized `/demo`: HTTP 401
 Browser DOM smoke (1440x1000 + 390x844): PASS
 Security headers (CSP / nosniff / DENY / no-store): PASS
 Phase 8 local benchmark: 56/56 PASS
-Phase 8 CockroachDB Cloud benchmark: 28/28 PASS
+Phase 8 CockroachDB Cloud deterministic benchmark: 28/28 PASS
 Phase 8 Cloud + NVIDIA advisor ablation: 7/7 PASS
 Phase 8 benefit target accuracy — Memory ON: 100%
 Phase 8 benefit target accuracy — Memory OFF: 0%
@@ -80,12 +80,21 @@ Managed MCP auditor DVI EXPLAIN visible: PASS
 Managed MCP auditor Cloud cleanup: 0 rows
 NVIDIA `nv-embedqa-e5-v5` live embedding call: PASS (1024D)
 Production semantic embedding `passage` / `query` separation: PASS
-Semantic 1024D → frozen VECTOR(64) projection: PASS
+Hosted semantic retrieval uses native `VECTOR(1024)`: PASS
+Legacy 1024D → 64D projection removed from hosted path: PASS
+Production semantic DVI `decision_memory_heads_scope_semantic_vec_idx`: PASS
+Production semantic hand-authored benchmark: 12/12 PASS
+Production semantic benefit/control relevance gate calibrated to 0.40: PASS
 Semantic paraphrase Cloud recall similarity: 0.4541
 Semantic shared-memory strategy change: PASS
 Semantic Cloud temporary rows cleanup: PASS
 Live AWS Lambda semantic embedding configured: PASS
 Live AWS Lambda cross-agent provenance: PASS
+Agent API identity derived from server-side token grant: PASS
+Caller-supplied `agent_id` rejected: HTTP 400
+Valid agent token outside granted scope rejected: HTTP 403
+Judge demo token rejected on agent API: HTTP 403
+Agent token grants bind identity / scope / permission / trust: PASS
 Public GitHub repository `yfj898/decisionvault`: PASS
 GitHub repository visibility: PUBLIC
 GitHub MIT license detection: PASS
@@ -97,12 +106,14 @@ Balanced contradictory memories → `CONFLICT_ABSTAIN`: PASS
 Server-side producer trust resolves winner without hiding conflict: PASS
 Stale-memory propagation gate: PASS
 Supersession removes obsolete episode from resolution: PASS
-Duplicate same-producer writes cannot amplify a vote: PASS
+Governed-head candidate crowding resistance: PASS
+Five duplicate episodes + one independent conflict → 2 governed heads: PASS
+Unknown producer trust is conservative when registry is active: PASS
 Competing successful strategies can abstain instead of silently picking: PASS
 CockroachDB Cloud + NVIDIA semantic governance smoke: PASS
 Governance Cloud temporary rows cleanup: PASS
 Post-governance Phase 8 local regression: 56/56 PASS
-Post-governance Phase 8 Cloud regression: 28/28 PASS
+Post-governance Phase 8 deterministic Cloud regression: 28/28 PASS
 Protected `/governance-demo` deployed on AWS Lambda: PASS
 Hosted contradictory memories → `CONFLICT_ABSTAIN`: PASS
 Hosted governance `memory_conflict=True`: PASS
@@ -110,3 +121,4 @@ Unauthorized `/governance-demo`: HTTP 401
 Hosted governance temporary rows cleanup: 0 rows
 Hosted governance desktop Chrome DOM smoke: PASS
 Hosted governance mobile Chrome DOM smoke: PASS
+Final red-team P0 remediation evidence: PASS

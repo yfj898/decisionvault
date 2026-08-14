@@ -8,6 +8,7 @@ from decisionvault.domain import DecisionEpisode, Outcome, Strategy
 from decisionvault.memory.cockroach import CockroachVectorMemoryStore
 from decisionvault.memory.connection import psycopg_connection_factory
 from decisionvault.memory.embedding import (
+    NVIDIA_EMBEDDING_DIMENSIONS,
     deterministic_text_embedding,
     project_dense_embedding,
 )
@@ -173,3 +174,30 @@ def test_cockroach_store_uses_query_embedder_for_recall():
     assert calls == [("query", "semantic query")]
     _, params = conn.cursor_value.executions[0]
     assert params[0] == "[0.00000000,1.00000000]"
+
+
+def test_nvidia_production_embedding_width_is_native_1024():
+    assert NVIDIA_EMBEDDING_DIMENSIONS == 1024
+
+
+def test_cockroach_store_uses_semantic_heads_for_production_recall():
+    conn = FakeConnection(rows=[])
+    calls = []
+
+    def semantic_query(text):
+        calls.append(("semantic-query", text))
+        return [0.25, 0.75]
+
+    store = CockroachVectorMemoryStore(
+        connection_factory=lambda: conn,
+        embedder=lambda _: [1.0, 0.0],
+        semantic_embedder=lambda _: [0.75, 0.25],
+        semantic_query_embedder=semantic_query,
+    )
+    store.recall(scope_id="scope-1", situation="semantic query", limit=5)
+
+    assert calls == [("semantic-query", "semantic query")]
+    sql, params = conn.cursor_value.executions[0]
+    assert "FROM decision_memory_heads" in sql
+    assert "semantic_embedding <=>" in sql
+    assert params[0] == "[0.25000000,0.75000000]"

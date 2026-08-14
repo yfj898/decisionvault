@@ -3,7 +3,25 @@ from __future__ import annotations
 import json
 
 import decisionvault.aws_lambda as aws_lambda
+from decisionvault.agent.auth import token_digest
 from decisionvault.domain import Decision, Strategy
+
+
+def _configure_agent(monkeypatch, *, token="agent-token", permission="decide"):
+    monkeypatch.setenv(
+        "AGENT_AUTH_JSON",
+        json.dumps(
+            {
+                token_digest(token): {
+                    "agent_id": "recovery-planner",
+                    "scope_prefixes": ["demo"],
+                    "permissions": [permission],
+                    "trust": 0.8,
+                }
+            }
+        ),
+    )
+    return token
 
 
 class StubAgent:
@@ -56,6 +74,7 @@ def test_root_serves_judge_ui_without_embedding_demo_token(monkeypatch):
 
 
 def test_decide_function_url_shape(monkeypatch):
+    token = _configure_agent(monkeypatch)
     monkeypatch.setattr(
         aws_lambda,
         "_build_agent",
@@ -65,6 +84,7 @@ def test_decide_function_url_shape(monkeypatch):
         {
             "requestContext": {"http": {"method": "POST"}},
             "rawPath": "/decide",
+            "headers": {"X-DecisionVault-Agent-Token": token},
             "body": json.dumps(
                 {"scope_id": "demo", "situation": "payment failed again"}
             ),
@@ -93,18 +113,18 @@ def test_bad_request_is_bounded():
     assert body["error"] == "bad_request"
 
 
-def test_post_routes_require_demo_token_when_configured(monkeypatch):
-    monkeypatch.setenv("DEMO_API_TOKEN", "local-demo-token")
+def test_agent_routes_require_agent_token(monkeypatch):
+    _configure_agent(monkeypatch)
     response = aws_lambda.lambda_handler(
         {
             "requestContext": {"http": {"method": "POST"}},
             "rawPath": "/decide",
             "headers": {},
-            "body": "{}",
+            "body": json.dumps({"scope_id": "demo", "situation": "x"}),
         },
         None,
     )
-    assert response["statusCode"] == 401
+    assert response["statusCode"] == 403
 
 
 def test_demo_requires_demo_token_when_configured(monkeypatch):
@@ -135,15 +155,36 @@ def test_governance_demo_requires_demo_token_when_configured(monkeypatch):
     assert response["statusCode"] == 401
 
 
-def test_post_routes_accept_matching_demo_token(monkeypatch):
-    monkeypatch.setenv("DEMO_API_TOKEN", "local-demo-token")
+def test_agent_routes_accept_matching_agent_token(monkeypatch):
+    token = _configure_agent(monkeypatch)
     response = aws_lambda.lambda_handler(
         {
             "requestContext": {"http": {"method": "POST"}},
             "rawPath": "/decide",
-            "headers": {"X-DecisionVault-Token": "local-demo-token"},
+            "headers": {"X-DecisionVault-Agent-Token": token},
             "body": "{}",
         },
         None,
     )
     assert response["statusCode"] == 400
+
+
+def test_caller_cannot_self_assert_agent_id(monkeypatch):
+    token = _configure_agent(monkeypatch)
+    response = aws_lambda.lambda_handler(
+        {
+            "requestContext": {"http": {"method": "POST"}},
+            "rawPath": "/decide",
+            "headers": {"X-DecisionVault-Agent-Token": token},
+            "body": json.dumps(
+                {
+                    "scope_id": "demo",
+                    "situation": "payment failed",
+                    "agent_id": "trusted-admin",
+                }
+            ),
+        },
+        None,
+    )
+    assert response["statusCode"] == 400
+    assert json.loads(response["body"])["error"] == "agent_id_is_server_bound"

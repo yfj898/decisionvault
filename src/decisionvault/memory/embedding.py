@@ -9,6 +9,7 @@ from urllib.request import Request, urlopen
 
 
 DEFAULT_EMBEDDING_DIMENSIONS = 64
+NVIDIA_EMBEDDING_DIMENSIONS = 1024
 
 
 def deterministic_text_embedding(
@@ -72,7 +73,7 @@ class NvidiaSemanticEmbedder:
     base_url: str = "https://integrate.api.nvidia.com/v1"
     model_id: str = "nvidia/nv-embedqa-e5-v5"
     timeout_seconds: float = 20.0
-    dimensions: int = DEFAULT_EMBEDDING_DIMENSIONS
+    expected_dimensions: int = NVIDIA_EMBEDDING_DIMENSIONS
 
     def _embed(self, text: str, *, input_type: str) -> list[float]:
         body = json.dumps(
@@ -95,8 +96,13 @@ class NvidiaSemanticEmbedder:
         )
         with urlopen(request, timeout=self.timeout_seconds) as response:
             payload = json.loads(response.read())
-        dense = payload["data"][0]["embedding"]
-        return project_dense_embedding(dense, dimensions=self.dimensions)
+        dense = [float(value) for value in payload["data"][0]["embedding"]]
+        if len(dense) != self.expected_dimensions:
+            raise ValueError(
+                "unexpected NVIDIA embedding width: "
+                f"expected {self.expected_dimensions}, got {len(dense)}"
+            )
+        return dense
 
     def embed_passage(self, text: str) -> list[float]:
         return self._embed(text, input_type="passage")

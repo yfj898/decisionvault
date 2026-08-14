@@ -4,6 +4,7 @@ import argparse
 import os
 
 from decisionvault.mcp_auditor import ManagedMcpClient, MemoryAuditorAgent
+from decisionvault.memory.embedding import NvidiaSemanticEmbedder
 
 
 def main() -> int:
@@ -11,6 +12,7 @@ def main() -> int:
     parser.add_argument("--scope-id", required=True)
     parser.add_argument("--situation", required=True)
     parser.add_argument("--database", default="defaultdb")
+    parser.add_argument("--semantic", action="store_true")
     args = parser.parse_args()
 
     cluster_id = os.getenv("COCKROACH_CLUSTER_ID", "").strip()
@@ -24,10 +26,30 @@ def main() -> int:
             "COCKROACH_MCP_API_KEY are required"
         )
 
+    semantic_query_vector = None
+    if args.semantic:
+        nvidia_key = os.getenv("NVIDIA_API_KEY", "").strip()
+        if not nvidia_key:
+            raise SystemExit("NVIDIA_API_KEY is required for --semantic")
+        semantic = NvidiaSemanticEmbedder(
+            api_key=nvidia_key,
+            model_id=os.getenv(
+                "NVIDIA_EMBED_MODEL_ID", "nvidia/nv-embedqa-e5-v5"
+            ),
+            base_url=os.getenv(
+                "NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"
+            ),
+        )
+        semantic_query_vector = semantic.embed_query(args.situation)
+
     result = MemoryAuditorAgent(
         ManagedMcpClient(cluster_id=cluster_id, bearer_token=token),
         database=args.database,
-    ).audit_scope(scope_id=args.scope_id, situation=args.situation)
+    ).audit_scope(
+        scope_id=args.scope_id,
+        situation=args.situation,
+        semantic_query_vector=semantic_query_vector,
+    )
     print(f"server_initialized={result.server_initialized}")
     print(f"required_tools_present={result.required_tools_present}")
     print(f"scope_memory_visible={result.scope_memory_visible}")

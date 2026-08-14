@@ -153,7 +153,13 @@ class MemoryAuditorAgent:
     client: ManagedMcpClient
     database: str = "defaultdb"
 
-    def audit_scope(self, *, scope_id: str, situation: str) -> MemoryAuditResult:
+    def audit_scope(
+        self,
+        *,
+        scope_id: str,
+        situation: str,
+        semantic_query_vector: list[float] | None = None,
+    ) -> MemoryAuditResult:
         init = self.client.initialize()
         init_text = _response_text(init)
         server_initialized = (
@@ -167,6 +173,7 @@ class MemoryAuditorAgent:
         )
 
         scope_literal = _sql_literal(scope_id)
+        semantic_mode = semantic_query_vector is not None
         select_payload = self.client.call_tool(
             "select_query",
             {
@@ -174,7 +181,7 @@ class MemoryAuditorAgent:
                 "query": (
                     "SELECT scope_id, strategy, outcome, effectiveness, confidence, "
                     "evidence->>'producer_agent_id' AS producer_agent_id "
-                    "FROM decision_episodes "
+                    f"FROM {'decision_memory_heads' if semantic_mode else 'decision_episodes'} "
                     f"WHERE scope_id = {scope_literal} ORDER BY created_at DESC LIMIT 5"
                 ),
             },
@@ -183,23 +190,32 @@ class MemoryAuditorAgent:
         scope_memory_visible = scope_id in select_text
         producer_provenance_visible = "producer_agent_id" in select_text
 
-        vector = _vector_literal(deterministic_text_embedding(situation))
+        vector = _vector_literal(
+            semantic_query_vector
+            if semantic_query_vector is not None
+            else deterministic_text_embedding(situation)
+        )
+        table = "decision_memory_heads" if semantic_mode else "decision_episodes"
+        column = "semantic_embedding" if semantic_mode else "embedding"
+        index_name = (
+            "decision_memory_heads_scope_semantic_vec_idx"
+            if semantic_mode
+            else "decision_episodes_scope_embedding_vec_idx"
+        )
         explain_payload = self.client.call_tool(
             "explain_query",
             {
                 "database": self.database,
                 "query": (
-                    "SELECT episode_id FROM decision_episodes "
+                    f"SELECT episode_id FROM {table} "
                     f"WHERE scope_id = {scope_literal} "
-                    f"ORDER BY embedding <=> '{vector}'::VECTOR LIMIT 5"
+                    f"ORDER BY {column} <=> '{vector}'::VECTOR LIMIT 5"
                 ),
             },
         )
         explain_text = _response_text(explain_payload).lower()
         vector_plan_visible = "vector search" in explain_text
-        vector_index_visible = (
-            "decision_episodes_scope_embedding_vec_idx" in explain_text
-        )
+        vector_index_visible = index_name in explain_text
         return MemoryAuditResult(
             server_initialized=server_initialized,
             required_tools_present=required_tools_present,

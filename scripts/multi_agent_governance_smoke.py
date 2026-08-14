@@ -6,7 +6,10 @@ import os
 from uuid import uuid4
 
 from decisionvault.agent.engine import DecisionAgent
-from decisionvault.agent.memory_governance import ConflictAwareMemoryResolver
+from decisionvault.agent.memory_governance import (
+    PRODUCTION_SEMANTIC_MIN_SIMILARITY,
+    ConflictAwareMemoryResolver,
+)
 from decisionvault.agent.policy import OutcomeAwarePolicy
 from decisionvault.domain import DecisionEpisode, Outcome, Strategy
 from decisionvault.memory.cockroach import CockroachVectorMemoryStore
@@ -48,6 +51,10 @@ def _delete_prefix(connection_factory, prefix: str) -> None:
     try:
         with conn.cursor() as cur:
             cur.execute(
+                "DELETE FROM decision_memory_heads WHERE scope_id LIKE %s",
+                (f"{prefix}%",),
+            )
+            cur.execute(
                 "DELETE FROM decision_episodes WHERE scope_id LIKE %s",
                 (f"{prefix}%",),
             )
@@ -72,12 +79,23 @@ def _build_store(connection_factory, *, semantic: bool):
     )
     return CockroachVectorMemoryStore(
         connection_factory=connection_factory,
-        embedder=embedder.embed_passage,
-        query_embedder=embedder.embed_query,
+        embedder=deterministic_text_embedding,
+        semantic_embedder=embedder.embed_passage,
+        semantic_query_embedder=embedder.embed_query,
     )
 
 
-def _run(store, prefix: str) -> None:
+def _resolver(*, semantic: bool, producer_trust=None) -> ConflictAwareMemoryResolver:
+    return ConflictAwareMemoryResolver(
+        minimum_similarity=(
+            PRODUCTION_SEMANTIC_MIN_SIMILARITY if semantic else 0.30
+        ),
+        producer_trust=producer_trust or {},
+    )
+
+
+def _run(store, prefix: str, *, semantic: bool) -> None:
+    default_policy = OutcomeAwarePolicy(resolver=_resolver(semantic=semantic))
     conflict_scope = f"{prefix}-conflict"
     store.save(
         _episode(
@@ -97,7 +115,11 @@ def _run(store, prefix: str) -> None:
             effectiveness=0.1,
         )
     )
-    conflict = DecisionAgent(memory=store, agent_id="agent-c").decide(
+    conflict = DecisionAgent(
+        memory=store,
+        agent_id="agent-c",
+        policy=default_policy,
+    ).decide(
         scope_id=conflict_scope,
         situation=SITUATION,
     )
@@ -112,8 +134,9 @@ def _run(store, prefix: str) -> None:
         raise RuntimeError("balanced contradiction did not abstain")
 
     trusted_policy = OutcomeAwarePolicy(
-        resolver=ConflictAwareMemoryResolver(
-            producer_trust={"agent-a": 1.0, "agent-b": 0.2}
+        resolver=_resolver(
+            semantic=semantic,
+            producer_trust={"agent-a": 1.0, "agent-b": 0.2},
         )
     )
     trusted = DecisionAgent(
@@ -137,7 +160,11 @@ def _run(store, prefix: str) -> None:
             age_days=120,
         )
     )
-    stale = DecisionAgent(memory=store, agent_id="agent-c").decide(
+    stale = DecisionAgent(
+        memory=store,
+        agent_id="agent-c",
+        policy=default_policy,
+    ).decide(
         scope_id=stale_scope,
         situation=SITUATION,
     )
@@ -166,7 +193,11 @@ def _run(store, prefix: str) -> None:
         extra={"supersedes_episode_id": old.episode_id},
     )
     store.save(new)
-    superseded = DecisionAgent(memory=store, agent_id="agent-c").decide(
+    superseded = DecisionAgent(
+        memory=store,
+        agent_id="agent-c",
+        policy=default_policy,
+    ).decide(
         scope_id=supersede_scope,
         situation=SITUATION,
     )
@@ -199,7 +230,11 @@ def _run(store, prefix: str) -> None:
             effectiveness=0.1,
         )
     )
-    duplicate = DecisionAgent(memory=store, agent_id="agent-c").decide(
+    duplicate = DecisionAgent(
+        memory=store,
+        agent_id="agent-c",
+        policy=default_policy,
+    ).decide(
         scope_id=duplicate_scope,
         situation=SITUATION,
     )
@@ -221,7 +256,7 @@ def main() -> int:
     prefix = f"governance-{uuid4()}"
     _delete_prefix(connection_factory, prefix)
     try:
-        _run(store, prefix)
+        _run(store, prefix, semantic=args.semantic)
     finally:
         _delete_prefix(connection_factory, prefix)
     print("governance_cloud_rows_cleaned=PASS")

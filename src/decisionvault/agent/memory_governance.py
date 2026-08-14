@@ -7,6 +7,9 @@ from typing import Mapping
 from decisionvault.domain import Outcome, RecalledEpisode, Strategy
 
 
+PRODUCTION_SEMANTIC_MIN_SIMILARITY = 0.40
+
+
 @dataclass(frozen=True, slots=True)
 class MemoryGovernanceResult:
     selected_strategy: Strategy | None
@@ -40,6 +43,7 @@ class ConflictAwareMemoryResolver:
     minimum_signal: float = 0.12
     conflict_margin: float = 0.08
     producer_trust: Mapping[str, float] = field(default_factory=dict)
+    unknown_producer_trust: float = 0.25
 
     def resolve(
         self,
@@ -210,7 +214,14 @@ class ConflictAwareMemoryResolver:
             0.25, 1.0 - (age_days / self.max_age_days)
         )
         producer = self._producer_id(item)
-        trust = float(self.producer_trust.get(producer, 1.0)) if producer else 1.0
+        if not self.producer_trust:
+            trust = 1.0
+        elif producer:
+            trust = float(
+                self.producer_trust.get(producer, self.unknown_producer_trust)
+            )
+        else:
+            trust = self.unknown_producer_trust
         trust = max(0.0, min(1.0, trust))
         return item.similarity * episode.confidence * recency * trust
 

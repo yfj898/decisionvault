@@ -8,11 +8,27 @@ CREATE TABLE IF NOT EXISTS decision_episodes (
     confidence FLOAT8 NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
     evidence JSONB NOT NULL DEFAULT '{}'::JSONB,
     embedding VECTOR(64) NOT NULL,
+    semantic_embedding VECTOR(1024),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS decision_episodes_scope_created_idx
 ON decision_episodes (scope_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS decision_memory_heads (
+    scope_id STRING NOT NULL,
+    producer_agent_id STRING NOT NULL,
+    strategy STRING NOT NULL,
+    episode_id UUID NOT NULL,
+    situation STRING NOT NULL,
+    outcome STRING NOT NULL,
+    effectiveness FLOAT8 NOT NULL CHECK (effectiveness >= 0 AND effectiveness <= 1),
+    confidence FLOAT8 NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+    evidence JSONB NOT NULL DEFAULT '{}'::JSONB,
+    semantic_embedding VECTOR(1024) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (scope_id, producer_agent_id, strategy)
+);
 
 -- Nearest-neighbor query used by the adapter:
 -- SELECT ..., (embedding <=> $query_vector::VECTOR) AS distance

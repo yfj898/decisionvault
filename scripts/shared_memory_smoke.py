@@ -5,6 +5,11 @@ import os
 from uuid import uuid4
 
 from decisionvault.agent.engine import DecisionAgent
+from decisionvault.agent.memory_governance import (
+    PRODUCTION_SEMANTIC_MIN_SIMILARITY,
+    ConflictAwareMemoryResolver,
+)
+from decisionvault.agent.policy import OutcomeAwarePolicy
 from decisionvault.domain import Outcome, Strategy
 from decisionvault.memory.cockroach import CockroachVectorMemoryStore
 from decisionvault.memory.connection import psycopg_connection_factory
@@ -33,6 +38,10 @@ def _delete_scope(connection_factory, scope_id: str) -> None:
     try:
         with conn.cursor() as cur:
             cur.execute(
+                "DELETE FROM decision_memory_heads WHERE scope_id IN (%s, %s)",
+                (scope_id, f"{scope_id}-isolated"),
+            )
+            cur.execute(
                 "DELETE FROM decision_episodes WHERE scope_id IN (%s, %s)",
                 (scope_id, f"{scope_id}-isolated"),
             )
@@ -41,8 +50,27 @@ def _delete_scope(connection_factory, scope_id: str) -> None:
         conn.close()
 
 
-def _run(store, scope_id: str, *, similar_case: str = SIMILAR_CASE) -> None:
-    producer = DecisionAgent(memory=store, agent_id="recovery-observer")
+def _run(
+    store,
+    scope_id: str,
+    *,
+    similar_case: str = SIMILAR_CASE,
+    semantic: bool = False,
+) -> None:
+    policy = (
+        OutcomeAwarePolicy(
+            resolver=ConflictAwareMemoryResolver(
+                minimum_similarity=PRODUCTION_SEMANTIC_MIN_SIMILARITY
+            )
+        )
+        if semantic
+        else OutcomeAwarePolicy()
+    )
+    producer = DecisionAgent(
+        memory=store,
+        agent_id="recovery-observer",
+        policy=policy,
+    )
     first = producer.decide(scope_id=scope_id, situation=FIRST_CASE)
     episode = producer.record_outcome(
         scope_id=scope_id,
@@ -53,7 +81,11 @@ def _run(store, scope_id: str, *, similar_case: str = SIMILAR_CASE) -> None:
         confidence=1.0,
     )
 
-    consumer = DecisionAgent(memory=store, agent_id="recovery-planner")
+    consumer = DecisionAgent(
+        memory=store,
+        agent_id="recovery-planner",
+        policy=policy,
+    )
     shared = consumer.decide(scope_id=scope_id, situation=similar_case)
     isolated = consumer.decide(
         scope_id=f"{scope_id}-isolated",
@@ -110,8 +142,9 @@ def main() -> int:
         )
         store = CockroachVectorMemoryStore(
             connection_factory=connection_factory,
-            embedder=semantic.embed_passage,
-            query_embedder=semantic.embed_query,
+            embedder=deterministic_text_embedding,
+            semantic_embedder=semantic.embed_passage,
+            semantic_query_embedder=semantic.embed_query,
         )
         similar_case = SEMANTIC_PARAPHRASE_CASE
     else:
@@ -122,7 +155,12 @@ def main() -> int:
         similar_case = SIMILAR_CASE
     _delete_scope(connection_factory, scope_id)
     try:
-        _run(store, scope_id, similar_case=similar_case)
+        _run(
+            store,
+            scope_id,
+            similar_case=similar_case,
+            semantic=args.semantic,
+        )
     finally:
         _delete_scope(connection_factory, scope_id)
     print("cloud_shared_memory_rows_cleaned=PASS")

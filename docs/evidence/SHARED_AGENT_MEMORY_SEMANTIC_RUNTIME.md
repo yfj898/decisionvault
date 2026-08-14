@@ -16,8 +16,11 @@ the deterministic hashing embedder used by the reproducible baseline benchmark.
 
 ## Shared memory contract
 
-New outcome episodes record `producer_agent_id` inside the existing `evidence`
-JSONB field, so no schema or Distributed Vector Index migration was required.
+New outcome episodes record `producer_agent_id` inside the immutable
+`decision_episodes.evidence` JSONB audit history. Production semantic recall also
+maintains one governed current head per `(scope_id, producer_agent_id, strategy)`
+in `decision_memory_heads` so repeated writes cannot crowd independent producers
+out of ANN top-K before governance.
 
 Observed local and CockroachDB Cloud result:
 
@@ -45,10 +48,18 @@ provider's required retrieval modes:
 - `passage` when persisting an episode;
 - `query` when recalling a future situation.
 
-The provider vector is projected through a deterministic signed feature hash into
-the frozen CockroachDB `VECTOR(64)` schema. The projection preserves the already
-verified Distributed Vector Index contract instead of introducing a late schema
-migration.
+An earlier hosted version projected the provider vector into `VECTOR(64)`. A
+red-team ranking test showed that the 1024→64 projection could change nearest-
+neighbor ordering, so the hosted path was migrated to the provider's native
+`VECTOR(1024)` representation. Production recall now uses:
+
+```text
+decision_memory_heads.semantic_embedding VECTOR(1024)
+decision_memory_heads_scope_semantic_vec_idx
+```
+
+The original `decision_episodes.embedding VECTOR(64)` and its DVI remain only as
+deterministic regression evidence.
 
 A real CockroachDB Cloud smoke used a paraphrased future situation rather than a
 near-duplicate string. Observed result:
@@ -63,8 +74,11 @@ semantic_shared_memory_smoke=PASS
 semantic_rows_cleaned=PASS
 ```
 
-The policy relevance threshold remained `0.30`; it was not lowered to make the
-semantic test pass.
+The deterministic/hash regression path retains its historical `0.30` relevance
+gate. Production E5-v5 retrieval uses a separately calibrated `0.40` gate. The
+calibration was driven by a hand-authored semantic benchmark: the lowest benefit
+case scored `0.4810`, while an irrelevant same-scope distractor scored `0.3575`.
+The production semantic suite passes `12/12` at `0.40`.
 
 ## Hosted AWS verification
 
@@ -81,13 +95,20 @@ cleaned=True
 live_multi_agent_semantic_demo=PASS
 ```
 
+The general hosted `/record` and `/decide` routes now use per-agent opaque tokens.
+Only SHA-256 token digests are stored in Lambda configuration; each digest binds
+the agent identity, allowed scope prefixes, permissions, and trust. A caller that
+supplies its own `agent_id` is rejected, and an otherwise valid agent token is
+rejected outside its granted scope.
+
 ## Boundary
 
 The payment-recovery scenario is the frozen end-to-end demonstration domain. The
 evidence supports a reusable shared outcome-memory pattern; it does not claim
 that DecisionVault has already been benchmarked across arbitrary business domains
-or that the 64-dimensional projection is equivalent to the provider's full 1024D
-embedding space.
+or that the policy benchmark measures real payment business success. The current
+semantic benchmark measures retrieval/governance conformance on hand-authored
+cases, not open-domain generalization.
 
 No NVIDIA key, CockroachDB connection string, OAuth token, cluster ID, AWS
 credential, or demo token is stored in this evidence.

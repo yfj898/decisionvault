@@ -13,26 +13,32 @@ an observation, prevent repeated writes from one producer from becoming fake
 consensus, avoid propagating stale or explicitly replaced knowledge, and surface
 contradictions rather than collapsing them invisibly.
 
-DecisionVault keeps the existing `decision_episodes` table and Distributed
-Vector Index unchanged. Governance happens between recall and the deterministic
-policy, so the previously verified persistence and vector contracts remain
-intact.
+DecisionVault keeps `decision_episodes` as immutable audit history and preserves
+the original deterministic `VECTOR(64)` contract for regression evidence. The
+hosted semantic path now uses a separate `decision_memory_heads` table with one
+current row per `(scope_id, producer_agent_id, strategy)` and a native
+`semantic_embedding VECTOR(1024)` Distributed Vector Index. This was introduced
+after red-team testing showed that deduplicating only after ANN top-K could allow
+one producer's repeated writes to crowd independent evidence out of the candidate
+set.
 
 ## Governance contract
 
 `ConflictAwareMemoryResolver` applies these rules before memory can affect a
 decision:
 
-1. similarity must meet the existing `0.30` relevance gate;
+1. similarity must meet the embedding-family gate: `0.30` for deterministic
+   regression tests and `0.40` for the hosted E5-v5 semantic path;
 2. `memory_status=REVOKED` observations are inadmissible;
 3. an episode named by another episode's `supersedes_episode_id` is retired;
 4. unpinned memory older than the configured age window (90 days by default) is
    ignored;
-5. only the newest active observation for a given producer + strategy receives a
-   vote, preventing duplicate amplification;
+5. production ANN retrieval reads the governed-head table, whose primary key
+   keeps only one current candidate per producer + strategy before top-K;
 6. successful and failed outcome evidence are aggregated separately;
-7. producer trust is optional server-side configuration and is never taken from
-   the producer's own episode payload;
+7. producer identity/scope/permission/trust comes from a server-side token grant,
+   never from a caller-supplied `agent_id`; unknown producers receive a
+   conservative trust default when a trust registry is active;
 8. a close contradiction returns `CONFLICT_ABSTAIN` and the policy falls back to
    `GENERIC_RETRY`;
 9. when trust or stronger evidence resolves the winner, `memory_conflict` remains
@@ -55,14 +61,15 @@ policy output                                       → safe default + conflict 
 After the governance implementation, the full repository test suite is:
 
 ```text
-42 passed
+51 passed
 ```
 
 ## Real CockroachDB Cloud + semantic embedding smoke
 
-The live smoke used the same CockroachDB Cloud `decision_episodes` table and
-NVIDIA `nvidia/nv-embedqa-e5-v5` production embedding path as the hosted
-application.
+The live smoke used the same CockroachDB Cloud `decision_memory_heads` governed
+candidate table and native NVIDIA `nvidia/nv-embedqa-e5-v5` 1024D production
+embedding path as the hosted application. Immutable source episodes remained in
+`decision_episodes`.
 
 Observed output:
 
@@ -90,6 +97,12 @@ governance_cloud_rows_cleaned=PASS
 This establishes that the governance behavior is not only an in-memory test
 contract: it operates after real semantic recall from CockroachDB Cloud.
 
+An additional candidate-crowding red-team seeded five high-similarity repeated
+episodes from one producer plus an independent conflicting producer. The history
+table retained all six episodes, while the governed-head table exposed only two
+current candidates (one per producer/strategy). The resulting decision correctly
+returned `CONFLICT_ABSTAIN` instead of hiding the independent conflict.
+
 ## Regression against the original memory claim
 
 Adding governance must not erase the original causal benefit of persistent
@@ -97,8 +110,9 @@ memory. The frozen Phase 8 benchmark was therefore re-run after the resolver was
 inserted into the policy path.
 
 ```text
-Local benchmark:        56 / 56 PASS
-CockroachDB Cloud:      28 / 28 PASS
+Local deterministic benchmark:        56 / 56 PASS
+CockroachDB Cloud deterministic:       28 / 28 PASS
+Native 1024D production semantic:      12 / 12 PASS
 
 Benefit target accuracy, Memory ON:  100%
 Benefit target accuracy, Memory OFF:   0%
@@ -108,31 +122,38 @@ False influence, Memory ON:            0%
 Cross-scope leakage, Memory ON:         0%
 ```
 
-The safety layer therefore preserves the already-demonstrated Memory ON/OFF
-behavioral advantage.
+The first two suites are deterministic regression/causal-ablation evidence. The
+separate `12/12` production semantic suite is hand-authored and covers same-scope
+distractors, cross-scope filtering, contradictions, stale memory, supersession,
+and candidate crowding. The safety layer therefore preserves the original Memory
+ON/OFF behavioral advantage while also being exercised on the hosted retrieval
+representation.
 
 ## Correction path
 
 The protected `/record` API now accepts an optional `supersedes_episode_id`.
 This provides a persistent correction handle without deleting immutable history:
-the replacement episode remains visible while the obsolete episode is excluded
-from future resolution.
+the replacement episode remains in history while the obsolete governed head is
+removed from future production recall.
 
 ## Trust boundary
 
-Optional producer trust comes from `AGENT_TRUST_JSON` in deployment
-configuration. An agent cannot raise its own trust by writing a field into its
-memory episode. Trust affects resolution weight only; it does not suppress the
-fact that contradictory qualified evidence exists.
+General `/record` and `/decide` callers authenticate with opaque per-agent tokens.
+Only SHA-256 token digests are stored in Lambda configuration via
+`AGENT_AUTH_JSON`; each grant binds an agent identity, allowed scope prefixes,
+permissions, and trust. A caller that sends `agent_id` in the request body is
+rejected. Trust affects resolution weight only; it does not suppress the fact
+that contradictory qualified evidence exists.
 
 ## Scope / authentication boundary
 
-The memory adapter enforces exact `scope_id` filtering and the existing benchmark
-continues to show zero cross-scope recall. That is a memory-isolation property,
-not a claim that the hackathon demo token is enterprise per-agent IAM. The hosted
-demo still uses a deliberately narrow application token for protected mutation
-routes. A production deployment would bind agent identity and scope membership to
-an external authentication / authorization system.
+The memory adapter enforces exact `scope_id` filtering, while the general agent
+API independently checks whether the authenticated agent token grants access to
+the requested scope prefix and permission. Live verification showed: a judge demo
+token is rejected on `/decide`, a caller-supplied `agent_id` is rejected, and a
+valid planner token is rejected outside its granted scope. The two atomic judge
+demo routes intentionally keep a separate hackathon demo token. This is still a
+compact application grant mechanism, not a claim of enterprise IAM integration.
 
 ## Hosted conflict proof
 

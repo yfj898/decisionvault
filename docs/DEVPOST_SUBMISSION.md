@@ -70,19 +70,31 @@ based decision.
 
 CockroachDB is the authoritative persistent memory system. Decision episodes are
 stored in `decision_episodes` with structured outcome fields, JSONB evidence,
-agent provenance, timestamps, and `VECTOR(64)` embeddings.
+agent provenance, timestamps, and the deterministic `VECTOR(64)` regression
+embedding. The hosted semantic path additionally stores the native NVIDIA E5-v5
+representation in `semantic_embedding VECTOR(1024)` and maintains governed
+current heads in `decision_memory_heads`.
 
 ### CockroachDB Distributed Vector Indexing
 
-The production memory lookup uses a scope-prefixed distributed vector index:
+The original deterministic regression path uses:
 
 ```sql
 CREATE VECTOR INDEX decision_episodes_scope_embedding_vec_idx
 ON decision_episodes (scope_id, embedding vector_cosine_ops);
 ```
 
-The scope prefix prevents cross-agent/team memory leakage while cosine search
-retrieves relevant episodes inside the authorized scope.
+The judge-facing semantic path uses a separate native-1024D index:
+
+```sql
+CREATE VECTOR INDEX decision_memory_heads_scope_semantic_vec_idx
+ON decision_memory_heads (scope_id, semantic_embedding vector_cosine_ops);
+```
+
+`scope_id` filtering prevents accidental cross-scope retrieval. Authorization is
+handled separately: `/record` and `/decide` require opaque per-agent tokens whose
+server-side SHA-256 digest grants bind agent identity, scope prefixes,
+permissions, and trust. A caller cannot choose its own `agent_id`.
 
 ### CockroachDB Cloud Managed MCP Server
 
@@ -97,9 +109,9 @@ calls to:
 ### NVIDIA semantic embeddings
 
 The hosted runtime uses `nvidia/nv-embedqa-e5-v5` with the correct retrieval
-modes: `passage` for stored episodes and `query` for future situations. The 1024D
-provider embedding is projected deterministically to the frozen `VECTOR(64)`
-contract, preserving the already-verified CockroachDB index schema.
+modes: `passage` for stored episodes and `query` for future situations. The
+provider's native 1024D vector is stored directly in CockroachDB; the hosted path
+does not use the former 1024→64 experimental projection.
 
 ### NVIDIA bounded explanation
 
@@ -119,8 +131,9 @@ The project contains both live evidence and systematic ablation:
 
 ```text
 Local deterministic benchmark:          56 / 56 PASS
-CockroachDB Cloud benchmark:             28 / 28 PASS
+CockroachDB Cloud deterministic:         28 / 28 PASS
 Cloud + NVIDIA advisor ablation:          7 /  7 PASS
+Native 1024D production semantic:        12 / 12 PASS
 
 Benefit target accuracy, Memory ON:      100%
 Benefit target accuracy, Memory OFF:       0%
@@ -134,8 +147,13 @@ Cross-scope leakage, Memory ON:            0%
 Advisor strategy invariance:             100%
 ```
 
-The benchmark deliberately measures behavioral correctness rather than claiming
-a simulated payment/business success rate.
+The `56/56` and `28/28` numbers are deterministic behavioral regression/causal
+ablation results, not hosted semantic-retrieval quality. Production semantic
+retrieval is evaluated separately with 12 hand-authored paraphrase/adversarial
+cases against the native 1024D DVI, including same-scope distractors,
+cross-scope filtering, contradictions, stale memory, supersession, and candidate
+crowding. The benchmarks deliberately measure decision-memory conformance rather
+than claiming a simulated payment/business success rate.
 
 ## Challenges we ran into
 
@@ -153,12 +171,19 @@ it is also allowed to choose the action. We therefore separated the authority
 boundary: CockroachDB memory plus deterministic policy commits the strategy first;
 the model may only explain it afterward.
 
-### Preserving the verified vector-index contract while adding real embeddings
+### Red-teaming semantic retrieval instead of preserving a convenient shortcut
 
 The original reproducible baseline used deterministic 64D hashing embeddings.
-Rather than migrate the proven CockroachDB schema late in the project, we added a
-deterministic 1024D→64D semantic projection and retained the same Distributed
-Vector Index.
+An early hosted version projected NVIDIA's 1024D embeddings into that 64D space
+to avoid a late schema migration. A retrieval red-team showed that this shortcut
+could change nearest-neighbor ranking, so we removed it from production, added a
+native `VECTOR(1024)` column and DVI, and kept 64D only as a regression baseline.
+
+The same red-team also found that deduplicating *after* ANN top-K could let one
+producer crowd another producer out of the candidate set. Production recall now
+queries `decision_memory_heads`, which stores one current head per
+`(scope_id, producer_agent_id, strategy)` while preserving immutable episodes in
+the audit-history table.
 
 ### Managed MCP client compatibility
 
@@ -174,6 +199,9 @@ reproducibly.
 - Real CockroachDB Cloud Managed MCP agentic audit workflow.
 - Real cross-agent memory provenance and scope isolation.
 - Real NVIDIA semantic embeddings in the hosted runtime.
+- Native 1024D CockroachDB semantic DVI with no lossy hosted projection.
+- Server-bound per-agent identity / scope / permission grants for general APIs.
+- Candidate-crowding-resistant governed memory heads.
 - Real AWS Lambda judge-facing application.
 - One-click Memory OFF vs Memory ON causal proof.
 - Systematic benchmark showing benefit, false-influence, isolation, and model-
@@ -191,24 +219,26 @@ Production agent memory needs three things together:
 
 We also learned that multi-agent memory is more robust when agents exchange
 durable evidence through a shared system of record rather than relying only on
-ephemeral message passing.
+ephemeral message passing, and that retrieval correctness must be evaluated
+before governance: a perfect conflict resolver cannot reason about evidence that
+ANN candidate generation has already hidden.
 
 ## What's next
 
 - Extend the strategy/action contract beyond the frozen payment-recovery domain.
+- Bind stored outcomes to execution receipts / external outcome verification
+  rather than accepting outcome labels from an upstream application contract.
 - Add learned or calibrated relevance thresholds while preserving the current
   deterministic safety gate.
-- Add memory lifecycle policies for aging, supersession, and conflicting
-  outcomes from multiple agents.
 - Add richer operational metrics around recall quality and memory drift.
-- Evaluate the full 1024D semantic embedding space versus the compact 64D
-  projection.
+- Replace the hackathon token grant mechanism with an enterprise identity / IAM
+  integration and centrally managed secrets.
 
 ## Built with
 
 CockroachDB Cloud, Distributed Vector Indexing, CockroachDB Cloud Managed MCP,
-AWS Lambda, Python, NVIDIA NIM/API, semantic embeddings, JSONB, vector search,
-agentic memory, multi-agent systems.
+AWS Lambda, Python, NVIDIA NIM/API, native 1024D semantic embeddings, JSONB,
+vector search, agentic memory, multi-agent systems.
 
 ## Try it out
 
@@ -243,10 +273,12 @@ Expected result:
 - the green PASS banner confirms the temporary scope was cleaned
 
 The UI and /health route are public/read-only. The token protects the mutation
-used only for the live causal demonstration.
+used only for the two atomic judge demonstrations. General `/record` and
+`/decide` APIs use separate per-agent tokens and are not part of the judge
+instructions.
 ```
 
-## <3 minute video plan — target 2:35
+## <3 minute video plan — target 2:42
 
 ### 0:00–0:18 — Problem
 
@@ -287,20 +319,34 @@ Narrate only what appears:
 - Point to `producer_agents=recovery-observer`.
 - Point to the cleanup PASS banner.
 
-### 1:28–1:52 — CockroachDB memory layer
+### 1:28–1:48 — CockroachDB memory layer
 
-Show the `decision_episodes` schema / DVI evidence or terminal capture with:
+Show the current production semantic schema / DVI evidence or terminal capture
+with:
 
 ```text
-VECTOR(64)
-decision_episodes_scope_embedding_vec_idx
+semantic_embedding VECTOR(1024)
+decision_memory_heads_scope_semantic_vec_idx
 vector search
 ```
 
-Mention that the Memory Auditor Agent also verifies the same memory/provenance
-and vector plan through CockroachDB Cloud Managed MCP.
+Mention that immutable episodes remain in `decision_episodes`, while governed
+current heads prevent duplicate candidate crowding. The Memory Auditor Agent can
+also inspect the memory/provenance and vector plan through CockroachDB Cloud
+Managed MCP.
 
-### 1:52–2:18 — Benchmark
+### 1:48–2:10 — Conflict safety proof
+
+Click **Run conflict safety proof** and point to:
+
+```text
+Agent A outcome conflicts with Agent B outcome
+→ Agent C
+→ CONFLICT_ABSTAIN
+→ memory_conflict=true
+```
+
+### 2:10–2:28 — Benchmark
 
 Show only the most important four numbers:
 
@@ -309,9 +355,14 @@ Benefit target accuracy: ON 100% / OFF 0%
 Failed-strategy repetition: ON 0% / OFF 100%
 False influence: 0%
 Cross-scope leakage: 0%
+Production semantic benchmark: 12/12
 ```
 
-### 2:18–2:35 — Close
+Clarify that the `56/56` and `28/28` figures are deterministic regression/
+causal-ablation results, while `12/12` is the separate native-1024D production
+semantic suite.
+
+### 2:28–2:42 — Close
 
 End with:
 

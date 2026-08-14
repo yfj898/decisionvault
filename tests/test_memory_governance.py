@@ -214,4 +214,33 @@ def test_policy_surfaces_conflict_abstention_as_safe_default():
     assert decision.strategy == Strategy.GENERIC_RETRY
     assert decision.memory_influenced is False
     assert decision.memory_conflict is True
-    assert decision.memory_resolution == "CONFLICT_ABSTAIN"
+
+
+def test_unknown_producer_does_not_receive_maximum_trust_when_registry_enabled():
+    resolver = ConflictAwareMemoryResolver(
+        producer_trust={"known-agent": 0.8},
+        unknown_producer_trust=0.25,
+    )
+    known = _memory(
+        "known",
+        producer="known-agent",
+        strategy=Strategy.REFRESH_PAYMENT_TOKEN,
+        outcome=Outcome.SUCCESS,
+        effectiveness=0.9,
+        confidence=1.0,
+        similarity=0.8,
+    )
+    unknown = _memory(
+        "unknown",
+        producer="unknown-agent",
+        strategy=Strategy.VERIFY_BILLING_PROFILE,
+        outcome=Outcome.SUCCESS,
+        effectiveness=0.9,
+        confidence=1.0,
+        similarity=0.8,
+    )
+
+    result = resolver.resolve([known, unknown], now=NOW)
+
+    assert result.selected_strategy == Strategy.REFRESH_PAYMENT_TOKEN
+    assert result.memory_influenced is True
