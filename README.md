@@ -1,5 +1,7 @@
 # DecisionVault
 
+[![CI](https://github.com/yfj898/decisionvault/actions/workflows/ci.yml/badge.svg)](https://github.com/yfj898/decisionvault/actions/workflows/ci.yml)
+
 **Outcome-aware shared decision memory for agent teams.**
 
 DecisionVault is a new project for the **CockroachDB × AWS Hackathon — Build with Agentic Memory**.

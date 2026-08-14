@@ -168,3 +168,4 @@ CloudWatch `DecisionVault` metric namespace: PASS
 CloudWatch request/error/latency metrics materialized: PASS
 CloudWatch memory-influence/conflict/idempotent-replay metrics materialized: PASS
 Observability sensitive/high-cardinality field scan: PASS
+Public GitHub Actions deterministic CI workflow: READY FOR FIRST RUN
