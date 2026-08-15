@@ -9,7 +9,7 @@ Phase 5 — Bounded model integration (NVIDIA live; Bedrock optional): PASS
 Phase 6 — AWS Lambda deployment: PASS
 Phase 7 — UI / production hardening: PASS
 Phase 8 — Benchmark / ablation: PASS
-Phase 9 — Demo / Devpost submission: FINAL VIDEO READY (public upload + submit pending)
+Phase 9 — Demo / Devpost submission: FINAL SUBTITLED VIDEO READY (public upload + submit pending)
 
 Baseline:
 8 tests PASS
@@ -22,6 +22,11 @@ Final English AI voiceover master: PASS / 166.763000s / H.264 High + AAC LC 48kH
 Final voiceover artifact: `recordings/DecisionVault_Submission_Demo_2m45s_Final.mp4`
 Final voiceover SHA-256: `64b7028404603693fb0fe6f56bd7b50f05f087a37e9c69a8e965eada23827d44`
 Voiceover: `en-US-AndrewNeural` / seven timeline-aligned segments / +8% speaking rate / max volume -1.9 dB
+Final hard-subtitled upload candidate: `recordings/DecisionVault_Submission_Demo_2m45s_Final_Subtitled.mp4`
+Final hard-subtitled video: PASS / 166.763000s / H.264 High / yuv420p / 1920×1080 / 30fps nominal / AAC LC 48kHz stereo / 5003 decoded frames / full decode 0 errors
+Final hard-subtitled SHA-256: `7e7bb1a91a2313cbf817b7cc3e8d5a039a1d0ce9419ea445240066fc2c9e91ab`
+Subtitle timeline: 31 English cues generated from the same `en-US-AndrewNeural` +8% narration text and word-boundary timing / `Noto Sans 24` / bottom-centered / shaded background + outline
+Subtitled audio stream is byte-identical to the accepted final-final narration stream (`SHA256=6e78e237bf8d58d4f4a85e32499f8832b0c8b0eab01ba06c2b197c88bc2a07bf`)
 Final voiceover pacing polish: causal-proof long silence reduced from 17.48s to 2.79s / conflict-proof long silence reduced from 11.30s to 3.11s / clean-master H.264 packet SHA-256 unchanged
 Clean-video visual review: Chrome Translate bubble closed before the story begins / 5s frame verified clean / guided cursor points at authority, causal-memory, conflict, external-learning, and production-proof evidence
 Final recording live gates: Memory OFF→ON causal proof PASS / CONFLICT_ABSTAIN PASS / DVI+MCP+UNKNOWN production evidence PASS

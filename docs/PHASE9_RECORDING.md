@@ -75,8 +75,9 @@ submission cut now also has the frozen English AI voiceover from
 
 Final clean automated capture completed successfully on August 15, 2026. The
 recording launcher disables Chrome translation features, and the X11 automation
-also closes the built-in Translate bubble before the story begins. A frame at
-5 seconds was visually checked and is clean.
+closes the built-in Translate bubble during the opening seconds. The bubble is
+gone by the 2-second checkpoint and all later proof frames are clean; a 5-second
+frame was also visually checked.
 
 ```text
 file: recordings/DecisionVault_Submission_Demo_2m45s.mp4
@@ -130,6 +131,45 @@ The final upload copy is also stored outside the repository at:
 
 ```text
 /home/bili-guo/Videos/录屏/DecisionVault_Submission_Demo_2m47s_Final.mp4
+```
+
+## Final hard-subtitled upload candidate
+
+The preferred public-upload artifact is the hard-subtitled build:
+
+```text
+file: recordings/DecisionVault_Submission_Demo_2m45s_Final_Subtitled.mp4
+duration: 166.763000 s (2:46.76)
+video: H.264 High / yuv420p / 1920×1080 / 30 fps nominal
+audio: AAC LC / 48 kHz / stereo
+decoded frames: 5003
+full-file decode errors: 0
+integrated loudness: -16.1 LUFS
+true peak: -1.9 dBFS
+subtitle cues: 31
+subtitle style: Noto Sans 24 / bottom-centered / shaded background / outline
+sha256: 7e7bb1a91a2313cbf817b7cc3e8d5a039a1d0ce9419ea445240066fc2c9e91ab
+```
+
+Subtitle timings are generated from Edge neural-TTS word-boundary output using
+the exact final narration text, `en-US-AndrewNeural`, and `+8%` rate. The seven
+segment-local SRT timelines are offset to the frozen section starts and merged
+into 31 cues. The final subtitle cue ends at 164.516 seconds, leaving a clean
+closing beat before the 166.763-second file ends.
+
+Only the video track is re-encoded to burn captions. The accepted final-final
+AAC narration track is copied without re-encoding; its compressed audio SHA-256
+matches exactly before and after subtitle muxing:
+
+```text
+6e78e237bf8d58d4f4a85e32499f8832b0c8b0eab01ba06c2b197c88bc2a07bf
+```
+
+The external upload copies are:
+
+```text
+/home/bili-guo/Videos/录屏/DecisionVault_Submission_Demo_2m47s_Final_Subtitled.mp4
+/home/bili-guo/Videos/录屏/DecisionVault_Submission_Demo_2m47s_Final.srt
 ```
 
 All four recording gates passed during the formal run. Post-record production
