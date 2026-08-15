@@ -104,6 +104,25 @@ def test_real_telemetry_requires_a_minimum_sample_floor():
     assert result.recommended_profile is None
 
 
+def test_unknown_external_execution_outcome_does_not_count_as_labeled_memory_evidence():
+    shadow = {
+        "profile": {"name": "adaptive_effective_confidence_0_35"},
+        "same_strategy_as_champion": True,
+        "executable": True,
+    }
+    row = _row(
+        outcome="UNKNOWN",
+        effectiveness=0.0,
+        shadow=shadow,
+    )
+    audit = audit_telemetry_sampling_bias([row])
+    result = calibrate_from_telemetry_rows([row], minimum_samples=1)
+    assert audit["memory_exposed_decisions"] == 1
+    assert audit["labeled_memory_exposed"] == 0
+    assert result.observed_samples == 0
+    assert result.recommendation == "INSUFFICIENT_REAL_TELEMETRY"
+
+
 def test_no_memory_default_requests_do_not_count_as_threshold_evidence():
     row = _row(
         outcome="SUCCESS",

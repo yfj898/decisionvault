@@ -375,6 +375,21 @@ def _harmful(outcome: str, effectiveness: float) -> bool:
     return outcome == Outcome.FAILED.value and effectiveness <= 0.3
 
 
+def _is_labeled_business_outcome(row: Mapping[str, Any]) -> bool:
+    """Only factual SUCCESS/FAILED outcomes may calibrate memory thresholds.
+
+    External execution receipts can prove that a side effect happened while the
+    downstream business outcome remains UNKNOWN. Treating UNKNOWN as a labeled
+    sample would inflate coverage and bias calibration toward execution plumbing
+    rather than memory quality.
+    """
+
+    return str(row.get("outcome") or "") in {
+        Outcome.SUCCESS.value,
+        Outcome.FAILED.value,
+    }
+
+
 def _memory_exposed(row: Mapping[str, Any]) -> bool:
     features = row.get("quality_features", {}) or {}
     if not isinstance(features, Mapping):
@@ -501,7 +516,7 @@ def audit_telemetry_sampling_bias(
 
     items = list(rows)
     exposed = [row for row in items if _memory_exposed(row)]
-    observed = [row for row in exposed if row.get("outcome")]
+    observed = [row for row in exposed if _is_labeled_business_outcome(row)]
     label_coverage = len(observed) / len(exposed) if exposed else 0.0
 
     exposed_scope = _distribution(exposed, "scope_level")
@@ -684,7 +699,9 @@ def calibrate_from_telemetry_rows(
     sampling_audit = audit_telemetry_sampling_bias(items)
     sampling_gate_pass = bool(sampling_audit["passed"])
     observed = [
-        row for row in items if row.get("outcome") and _memory_exposed(row)
+        row
+        for row in items
+        if _is_labeled_business_outcome(row) and _memory_exposed(row)
     ]
     champion_successes = sum(
         _qualified_success(str(row["outcome"]), float(row["effectiveness"]))
@@ -1039,7 +1056,7 @@ def run_persisted_calibration(
         connection_factory=connection_factory,
         summary=summary,
         decision_rows=len(rows),
-        labeled_outcomes=sum(row.get("outcome") is not None for row in rows),
+        labeled_outcomes=sum(_is_labeled_business_outcome(row) for row in rows),
         lookback_days=lookback_days,
         minimum_samples=minimum_samples,
         minimum_success_retention=minimum_success_retention,

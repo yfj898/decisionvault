@@ -34,9 +34,14 @@ from decisionvault.execution import (
     decision_provenance_payload,
     decision_state_digest,
     issue_decision_snapshot,
+    issue_external_receipt,
     issue_sandbox_receipt,
     verify_decision_snapshot,
     verify_execution_receipt,
+)
+from decisionvault.execution_adapters import (
+    ExternalExecutionUnavailable,
+    GitHubContentsExecutionAdapter,
 )
 from decisionvault.memory.cockroach import (
     CockroachVectorMemoryStore,
@@ -72,6 +77,11 @@ from decisionvault.rate_limit import CockroachRateLimiter
 from decisionvault.runtime_secrets import hydrate_runtime_secrets
 from decisionvault.semantic_benchmark import PRODUCTION_BENCHMARK_PRODUCER_AGENT_IDS
 from decisionvault.ui import INDEX_HTML
+
+
+EXECUTION_PROVIDER_SANDBOX = "sandbox"
+EXECUTION_PROVIDER_GITHUB_CONTENTS = "github_contents"
+GITHUB_EXECUTION_REPOSITORY = "yfj898/decisionvault-execution-sandbox"
 
 
 DEMO_FIRST_CASE = (
@@ -137,6 +147,10 @@ class RateLimitExceeded(Exception):
 
 class ExecutionPolicyConflict(Exception):
     """Execution is blocked because the current deterministic decision disagrees."""
+
+
+class BusinessOutcomeUnverified(Exception):
+    """A verified side effect is not yet a learnable business outcome."""
 
 
 def _embedding_revision() -> str:
@@ -389,6 +403,41 @@ def _execution_signing_material() -> tuple[str | None, str, dict[str, str]]:
     if any(len(value) < 16 for value in keys.values()):
         raise RuntimeError("execution signing keyring contains a short verification key")
     return active_key_id, active_secret, keys
+
+
+def _configured_execution_provider() -> str:
+    value = os.getenv("EXECUTION_PROVIDER", EXECUTION_PROVIDER_SANDBOX).strip().lower()
+    if value not in {EXECUTION_PROVIDER_SANDBOX, EXECUTION_PROVIDER_GITHUB_CONTENTS}:
+        raise RuntimeError("EXECUTION_PROVIDER is invalid")
+    return value
+
+
+def _github_execution_adapter() -> GitHubContentsExecutionAdapter:
+    repository = os.getenv(
+        "GITHUB_EXECUTION_REPOSITORY", GITHUB_EXECUTION_REPOSITORY
+    ).strip()
+    if repository != GITHUB_EXECUTION_REPOSITORY:
+        raise RuntimeError("GitHub execution repository is not source-allowlisted")
+    token = os.getenv("GITHUB_EXECUTION_TOKEN", "").strip()
+    if not token:
+        raise RuntimeError("GITHUB_EXECUTION_TOKEN is not configured")
+    timeout = min(8.0, max(0.5, float(os.getenv("GITHUB_EXECUTION_TIMEOUT_SECONDS", "8"))))
+    return GitHubContentsExecutionAdapter(
+        token=token,
+        repository=repository,
+        timeout_seconds=timeout,
+    )
+
+
+def _execution_provider_config_ok() -> bool:
+    provider = _configured_execution_provider()
+    if provider == EXECUTION_PROVIDER_SANDBOX:
+        configured_sandbox_scenario(
+            os.getenv("EXECUTION_SANDBOX_SCENARIO", "stale_payment_token")
+        )
+        return True
+    _github_execution_adapter()
+    return True
 
 
 def _memory_scope_rules() -> tuple[
@@ -940,7 +989,8 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
     agent_auth_ok = False
     receipt_signing_ok = False
     demo_auth_ok = False
-    sandbox_config_ok = False
+    execution_config_ok = False
+    configured_execution_provider: str | None = None
     configured_embedding_space: str | None = None
     runtime_database_user: str | None = None
     errors: list[str] = []
@@ -991,12 +1041,11 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
             errors.append("demo_auth:MissingToken")
 
         try:
-            configured_sandbox_scenario(
-                os.getenv("EXECUTION_SANDBOX_SCENARIO", "stale_payment_token")
-            )
-            sandbox_config_ok = True
+            configured_execution_provider = _configured_execution_provider()
+            _execution_provider_config_ok()
+            execution_config_ok = True
         except Exception as exc:
-            errors.append(f"execution_sandbox:{type(exc).__name__}")
+            errors.append(f"execution_provider:{type(exc).__name__}")
 
         try:
             conn = psycopg_connection_factory()()
@@ -1253,7 +1302,7 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
             agent_auth_ok,
             receipt_signing_ok,
             demo_auth_ok,
-            sandbox_config_ok,
+            execution_config_ok,
         )
     )
     return (
@@ -1282,7 +1331,12 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
             "agent_auth": agent_auth_ok,
             "execution_receipt_signing": receipt_signing_ok,
             "demo_auth": demo_auth_ok,
-            "execution_sandbox": sandbox_config_ok,
+            "execution_provider": configured_execution_provider,
+            "execution_provider_config": execution_config_ok,
+            "execution_sandbox": bool(
+                execution_config_ok
+                and configured_execution_provider == EXECUTION_PROVIDER_SANDBOX
+            ),
             "advisor_required_for_readiness": False,
             "errors": errors,
         },
@@ -1371,11 +1425,23 @@ def _execute(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
         field="situation",
         maximum_chars=MAX_SITUATION_CHARS,
     )
-    if "scenario" in body:
-        raise ValueError("scenario is server-controlled and must not be supplied")
-    scenario = configured_sandbox_scenario(
-        os.getenv("EXECUTION_SANDBOX_SCENARIO", "stale_payment_token")
-    )
+    caller_controlled_execution_fields = {
+        key
+        for key in (
+            "scenario",
+            "execution_provider",
+            "repository",
+            "external_url",
+            "issue_title",
+            "issue_body",
+        )
+        if key in body
+    }
+    if caller_controlled_execution_fields:
+        raise ValueError(
+            "execution provider, target, and payload are server-controlled"
+        )
+    execution_provider = _configured_execution_provider()
     strategy = Strategy(str(body.get("strategy", "")))
     signing_key_id, signing_secret, verification_secrets = _execution_signing_material()
     snapshot = verify_decision_snapshot(
@@ -1409,12 +1475,49 @@ def _execute(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
         raise DecisionSnapshotStale(
             "decision snapshot is stale relative to current policy/memory state"
         )
-    receipt = issue_sandbox_receipt(
+    if execution_provider == EXECUTION_PROVIDER_SANDBOX:
+        scenario = configured_sandbox_scenario(
+            os.getenv("EXECUTION_SANDBOX_SCENARIO", "stale_payment_token")
+        )
+        receipt = issue_sandbox_receipt(
+            scope_id=scope_id,
+            agent_id=agent_id,
+            situation=situation,
+            strategy=strategy,
+            scenario=scenario,
+            signing_secret=signing_secret,
+            signing_key_id=signing_key_id,
+            decision_snapshot_id=snapshot.snapshot_id,
+            decision_digest=snapshot.decision_digest,
+            decision_revision=snapshot.decision_revision,
+            decision_agent_id=snapshot.agent_id,
+            decision_provenance=snapshot.decision_provenance,
+        )
+        verified_source = "decisionvault-payment-recovery-sandbox"
+        return {
+            "execution_receipt": receipt,
+            "policy_decision": _decision_payload(current_decision),
+            "execution_provider": EXECUTION_PROVIDER_SANDBOX,
+            "verified_execution_source": verified_source,
+            "verified_outcome_source": verified_source,
+            "business_outcome_verified": True,
+        }
+
+    result = _github_execution_adapter().execute(
+        decision_snapshot_id=snapshot.snapshot_id,
+        strategy=strategy,
+    )
+    receipt = issue_external_receipt(
         scope_id=scope_id,
         agent_id=agent_id,
         situation=situation,
         strategy=strategy,
-        scenario=scenario,
+        execution_provider=result.provider,
+        external_operation_id=result.external_operation_id,
+        execution_evidence=result.evidence,
+        outcome=result.outcome,
+        effectiveness=result.effectiveness,
+        confidence=result.confidence,
         signing_secret=signing_secret,
         signing_key_id=signing_key_id,
         decision_snapshot_id=snapshot.snapshot_id,
@@ -1426,7 +1529,10 @@ def _execute(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
     return {
         "execution_receipt": receipt,
         "policy_decision": _decision_payload(current_decision),
-        "verified_outcome_source": "decisionvault-payment-recovery-sandbox",
+        "execution_provider": EXECUTION_PROVIDER_GITHUB_CONTENTS,
+        "verified_execution_source": result.provider,
+        "verified_outcome_source": None,
+        "business_outcome_verified": False,
     }
 
 
@@ -1695,6 +1801,11 @@ def _record(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
         expected_agent_id=agent_id,
         ttl_seconds=None,
     )
+    if receipt.execution_provider and receipt.outcome == Outcome.UNKNOWN:
+        raise BusinessOutcomeUnverified(
+            "external side effect is verified but business outcome is not; "
+            "decision memory is not updated"
+        )
     if len(receipt.situation) > MAX_SITUATION_CHARS:
         raise ValueError(
             f"execution receipt situation must be at most {MAX_SITUATION_CHARS} characters"
@@ -1725,9 +1836,19 @@ def _record(body: dict[str, Any], *, agent_id: str) -> dict[str, Any]:
         "execution_scenario": receipt.scenario,
         "execution_issued_at": receipt.issued_at.isoformat(),
         "execution_verified": "true",
-        "execution_outcome_source": "decisionvault-payment-recovery-sandbox",
+        "execution_outcome_source": (
+            receipt.execution_provider
+            or "decisionvault-payment-recovery-sandbox"
+        ),
+        "business_outcome_verified": str(
+            receipt.outcome in {Outcome.SUCCESS, Outcome.FAILED}
+        ).lower(),
         "situation_class": receipt.scenario,
     }
+    if receipt.execution_provider:
+        evidence["execution_provider"] = receipt.execution_provider
+    if receipt.external_operation_id:
+        evidence["external_operation_id"] = receipt.external_operation_id
     required, excluded = SCENARIO_APPLICABILITY.get(
         receipt.scenario, (frozenset(), frozenset())
     )
@@ -2027,6 +2148,16 @@ def _handle_request(event: dict[str, Any], _context: Any) -> dict[str, Any]:
         return _json_response(409, {"error": "conflict", "detail": str(exc)})
     except (ValueError, TypeError, json.JSONDecodeError) as exc:
         return _json_response(400, {"error": "bad_request", "detail": str(exc)})
+    except ExternalExecutionUnavailable as exc:
+        return _json_response(
+            503,
+            {"error": "execution_provider_unavailable", "detail": str(exc)},
+        )
+    except BusinessOutcomeUnverified as exc:
+        return _json_response(
+            422,
+            {"error": "business_outcome_unverified", "detail": str(exc)},
+        )
     except Exception as exc:
         return _json_response(
             500,

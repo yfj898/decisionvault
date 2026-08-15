@@ -1,0 +1,15 @@
+{
+  "automatic_memory_success_claim": false,
+  "blob_sha": "9648023ba32c2022bf995b5a6e72369ac2635725",
+  "business_outcome": "UNKNOWN",
+  "business_outcome_verified": false,
+  "external_operation_id": "github:yfj898/decisionvault-execution-sandbox:decisionvault-executions/eb56b183-8dc1-4774-b3e2-74bcff05dcef.json@9648023ba32c2022bf995b5a6e72369ac2635725",
+  "first_execution_verified": true,
+  "generated_at": "2026-08-15T02:24:34.371514+00:00",
+  "idempotent_replay_verified": true,
+  "provider": "github-contents-v1",
+  "receipt_verified": true,
+  "receipt_version": 3,
+  "repository": "yfj898/decisionvault-execution-sandbox",
+  "resource_path": "decisionvault-executions/eb56b183-8dc1-4774-b3e2-74bcff05dcef.json"
+}

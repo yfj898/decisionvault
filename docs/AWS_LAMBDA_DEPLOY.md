@@ -49,14 +49,26 @@ Hosted Lambda environment variables:
   the application at 50 scopes
 - `REVOKE_AGENT_IDS` — comma-separated server-bound agent IDs allowed to invoke
   revocation after normal token/scope capability checks; contains no raw token
+- `EXECUTION_PROVIDER=sandbox` — server-owned execution provider selector. The
+  hosted production default remains `sandbox`; callers cannot override it.
 - `EXECUTION_SANDBOX_SCENARIO=stale_payment_token` — non-secret server-owned
   sandbox fixture; general `/execute` callers cannot override it
+- `GITHUB_EXECUTION_REPOSITORY=yfj898/decisionvault-execution-sandbox` — the
+  only source-allowlisted repository accepted by the optional real GitHub
+  Contents adapter
+- `GITHUB_EXECUTION_TIMEOUT_SECONDS=8` — bounded GitHub API timeout, clamped by
+  the application to at most 8 seconds
 
 The referenced secret stores `DATABASE_URL`, `NVIDIA_API_KEY`, `DEMO_API_TOKEN`,
 `AGENT_AUTH_JSON`, and `EXECUTION_RECEIPT_SECRET`. Governed Adaptive Memory v7
 also accepts `CONSOLIDATION_DATABASE_URL` for a distinct CockroachDB
 consolidator identity and `EXECUTION_RECEIPT_KEYRING_JSON` for versioned signing
-keys with retained verification-only history. Managed readiness fails closed if
+keys with retained verification-only history. `GITHUB_EXECUTION_TOKEN` is an
+optional secret used only when `EXECUTION_PROVIDER=github_contents`; readiness
+fails closed if that provider is selected without the token or with a repository
+other than the source-allowlisted test repo. Do not reuse a broad personal token
+for hosted activation; provision a dedicated least-privilege credential first.
+Managed readiness fails closed if
 the consolidator credential is absent or resolves to the same database identity
 as request runtime. The Lambda execution role is granted
 `secretsmanager:GetSecretValue` only on that secret ARN.
@@ -72,10 +84,14 @@ Secrets Manager at runtime.
 - `GET /health/live` — process liveness only
 - `GET /health/ready` — active Secrets Manager + CockroachDB governance-v2
   schema + E5-v5 readiness
-- `POST /execute` — agent-token authenticated sandbox execution; returns a signed
-  receipt only if the caller supplies the signed `/decide` decision snapshot and
-  the current deterministic policy/memory digest still matches it; stale
-  snapshots return HTTP 409 and no receipt; caller-supplied `scenario` is rejected
+- `POST /execute` — agent-token authenticated server-selected execution. The
+  current hosted provider is the deterministic payment sandbox. The optional
+  `github_contents` provider writes exactly one test-only repository resource at
+  `decisionvault-executions/<snapshot-id>.json`, reads that exact path back, and
+  then signs an external receipt v3. The route returns a receipt only if the
+  caller supplies the signed `/decide` snapshot and the current deterministic
+  policy/memory digest still matches it; stale snapshots return HTTP 409 and no
+  receipt. Caller-supplied provider/target/payload fields are rejected.
 - `POST /record` — agent-token authenticated outcome recording
 - `POST /decide` — agent-token authenticated scoped recall/decision
 - `POST /revoke` — producer-bound current-head revocation with append-only audit
@@ -92,6 +108,16 @@ revision. A separately authorized executor may consume that snapshot within the
 same scope; the execution receipt records both `decision_agent_id` and the actual
 executor `agent_id`. A conflict abstention is `strategy=null`, `action=ABSTAIN`,
 and `executable=false`.
+
+External execution receipts deliberately separate **side-effect verification**
+from **business-outcome verification**. The GitHub test adapter proves that the
+external resource exists and binds its repository/path/blob SHA into the signed
+receipt, but its business outcome is `UNKNOWN` with zero effectiveness. `/record`
+rejects that receipt with HTTP 422 `business_outcome_unverified` rather than
+creating an L1 decision episode; memory calibration also counts only factual
+`SUCCESS`/`FAILED` outcomes as a second defensive boundary. This prevents a
+successful transport/write from being mislearned as a successful
+payment-recovery strategy or from crowding governed recall candidates.
 
 `GET /health/ready` is fail-closed for the security control plane as well as
 CockroachDB/NVIDIA dependencies. A ready response requires parseable non-empty

@@ -11,8 +11,10 @@ from decisionvault.domain import Decision, DecisionAction, Strategy
 from decisionvault.execution import (
     decision_state_digest,
     issue_decision_snapshot,
+    issue_external_receipt,
     issue_sandbox_receipt,
 )
+from decisionvault.execution_adapters import ExternalExecutionResult
 from decisionvault.memory.cockroach import SupersessionWriteConflict
 
 
@@ -473,6 +475,136 @@ def test_execute_route_uses_server_configured_scenario(monkeypatch):
     assert body["execution_receipt"]["outcome"] == "SUCCESS"
 
 
+def test_execute_route_can_use_server_bound_github_provider_without_claiming_business_success(
+    monkeypatch,
+):
+    token = _configure_executor(monkeypatch)
+    monkeypatch.setenv("EXECUTION_PROVIDER", "github_contents")
+    situation = "dispatch governed remediation workflow"
+
+    class FakeGitHubAdapter:
+        def execute(self, *, decision_snapshot_id, strategy):
+            return ExternalExecutionResult(
+                provider="github-contents-v1",
+                external_operation_id=(
+                    "github:yfj898/decisionvault-execution-sandbox:"
+                    "decisionvault-executions/test.json@blob42"
+                ),
+                outcome=aws_lambda.Outcome.UNKNOWN,
+                effectiveness=0.0,
+                confidence=1.0,
+                evidence={
+                    "verified": True,
+                    "object_type": "github_repository_file",
+                    "repository": "yfj898/decisionvault-execution-sandbox",
+                    "path": "decisionvault-executions/test.json",
+                    "blob_sha": "blob42",
+                    "idempotent_replay": False,
+                },
+            )
+
+    monkeypatch.setattr(aws_lambda, "_github_execution_adapter", FakeGitHubAdapter)
+    response = aws_lambda.lambda_handler(
+        {
+            "requestContext": {"http": {"method": "POST"}},
+            "rawPath": "/execute",
+            "headers": {"X-DecisionVault-Agent-Token": token},
+            "body": json.dumps(
+                {
+                    "scope_id": "demo",
+                    "situation": situation,
+                    "strategy": "GENERIC_RETRY",
+                    "decision_snapshot": _decision_snapshot(situation=situation),
+                }
+            ),
+        },
+        None,
+    )
+    body = json.loads(response["body"])
+    receipt = body["execution_receipt"]
+    assert response["statusCode"] == 200
+    assert receipt["version"] == 3
+    assert receipt["outcome"] == "UNKNOWN"
+    assert receipt["execution_provider"] == "github-contents-v1"
+    assert receipt["external_operation_id"].endswith("@blob42")
+    assert body["business_outcome_verified"] is False
+    assert body["verified_outcome_source"] is None
+
+
+def test_execute_route_rejects_caller_controlled_provider_or_repository(monkeypatch):
+    token = _configure_executor(monkeypatch)
+    situation = "caller attempts to redirect execution"
+    for extra in (
+        {"execution_provider": "github_contents"},
+        {"repository": "attacker/example"},
+    ):
+        response = aws_lambda.lambda_handler(
+            {
+                "requestContext": {"http": {"method": "POST"}},
+                "rawPath": "/execute",
+                "headers": {"X-DecisionVault-Agent-Token": token},
+                "body": json.dumps(
+                    {
+                        "scope_id": "demo",
+                        "situation": situation,
+                        "strategy": "GENERIC_RETRY",
+                        "decision_snapshot": _decision_snapshot(situation=situation),
+                        **extra,
+                    }
+                ),
+            },
+            None,
+        )
+        assert response["statusCode"] == 400
+        assert "server-controlled" in json.loads(response["body"])["detail"]
+
+
+def test_external_execution_provider_failure_returns_503_without_receipt(monkeypatch):
+    token = _configure_executor(monkeypatch)
+    monkeypatch.setenv("EXECUTION_PROVIDER", "github_contents")
+    situation = "external provider unavailable"
+
+    class FailingGitHubAdapter:
+        def execute(self, *, decision_snapshot_id, strategy):
+            raise aws_lambda.ExternalExecutionUnavailable("provider unavailable")
+
+    monkeypatch.setattr(aws_lambda, "_github_execution_adapter", FailingGitHubAdapter)
+    response = aws_lambda.lambda_handler(
+        {
+            "requestContext": {"http": {"method": "POST"}},
+            "rawPath": "/execute",
+            "headers": {"X-DecisionVault-Agent-Token": token},
+            "body": json.dumps(
+                {
+                    "scope_id": "demo",
+                    "situation": situation,
+                    "strategy": "GENERIC_RETRY",
+                    "decision_snapshot": _decision_snapshot(situation=situation),
+                }
+            ),
+        },
+        None,
+    )
+    body = json.loads(response["body"])
+    assert response["statusCode"] == 503
+    assert body["error"] == "execution_provider_unavailable"
+    assert "execution_receipt" not in body
+
+
+def test_github_execution_config_fails_closed_without_secret_or_allowlisted_repo(
+    monkeypatch,
+):
+    monkeypatch.setenv("EXECUTION_PROVIDER", "github_contents")
+    monkeypatch.delenv("GITHUB_EXECUTION_TOKEN", raising=False)
+    with pytest.raises(RuntimeError, match="TOKEN"):
+        aws_lambda._execution_provider_config_ok()
+
+    monkeypatch.setenv("GITHUB_EXECUTION_TOKEN", "test-token")
+    monkeypatch.setenv("GITHUB_EXECUTION_REPOSITORY", "attacker/repo")
+    with pytest.raises(RuntimeError, match="allowlisted"):
+        aws_lambda._execution_provider_config_ok()
+
+
 def test_execute_route_blocks_abstained_decision(monkeypatch):
     token = _configure_executor(monkeypatch)
     situation = "conflicting payment recovery evidence"
@@ -559,6 +691,59 @@ def test_record_rejects_direct_outcome_fields(monkeypatch):
     )
     assert response["statusCode"] == 400
     assert "execution_receipt" in json.loads(response["body"])["detail"]
+
+
+def test_record_rejects_external_side_effect_without_verified_business_outcome(
+    monkeypatch,
+):
+    token = _configure_executor(monkeypatch)
+    receipt = issue_external_receipt(
+        scope_id="demo",
+        agent_id="recovery-observer-api",
+        situation="test-only governed external dispatch",
+        strategy=Strategy.GENERIC_RETRY,
+        execution_provider="github-contents-v1",
+        external_operation_id=(
+            "github:yfj898/decisionvault-execution-sandbox:"
+            "decisionvault-executions/example.json@blob"
+        ),
+        execution_evidence={
+            "verified": True,
+            "object_type": "github_repository_file",
+            "repository": "yfj898/decisionvault-execution-sandbox",
+            "path": "decisionvault-executions/example.json",
+            "blob_sha": "blob",
+        },
+        outcome=aws_lambda.Outcome.UNKNOWN,
+        effectiveness=0.0,
+        confidence=1.0,
+        signing_secret="test-execution-receipt-secret-123",
+        decision_snapshot_id="00000000-0000-0000-0000-000000000999",
+        decision_digest="a" * 64,
+        decision_revision="governed-adaptive-memory-v2",
+        decision_agent_id="recovery-planner-api",
+    )
+    monkeypatch.setattr(
+        aws_lambda,
+        "_episode_by_receipt",
+        lambda _receipt_id: (_ for _ in ()).throw(
+            AssertionError("unverified business outcome must not touch decision memory")
+        ),
+    )
+    response = aws_lambda.lambda_handler(
+        {
+            "requestContext": {"http": {"method": "POST"}},
+            "rawPath": "/record",
+            "headers": {"X-DecisionVault-Agent-Token": token},
+            "body": json.dumps(
+                {"scope_id": "demo", "execution_receipt": receipt}
+            ),
+        },
+        None,
+    )
+    body = json.loads(response["body"])
+    assert response["statusCode"] == 422
+    assert body["error"] == "business_outcome_unverified"
 
 
 def test_record_returns_existing_episode_for_receipt_replay(monkeypatch):

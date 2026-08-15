@@ -12,6 +12,7 @@ from decisionvault.domain import Decision, Outcome, Strategy
 
 
 RECEIPT_VERSION = 2
+EXTERNAL_RECEIPT_VERSION = 3
 LEGACY_RECEIPT_VERSION = 1
 DEFAULT_RECEIPT_TTL_SECONDS = 900
 DECISION_SNAPSHOT_VERSION = 1
@@ -72,6 +73,9 @@ class VerifiedExecutionReceipt:
     decision_revision: str | None = None
     decision_agent_id: str | None = None
     decision_provenance: Mapping[str, Any] | None = None
+    execution_provider: str | None = None
+    external_operation_id: str | None = None
+    execution_evidence: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -350,6 +354,71 @@ def issue_sandbox_receipt(
     return payload
 
 
+def issue_external_receipt(
+    *,
+    scope_id: str,
+    agent_id: str,
+    situation: str,
+    strategy: Strategy,
+    execution_provider: str,
+    external_operation_id: str,
+    execution_evidence: Mapping[str, Any],
+    outcome: Outcome,
+    effectiveness: float,
+    confidence: float,
+    signing_secret: str,
+    decision_snapshot_id: str,
+    decision_digest: str,
+    decision_revision: str,
+    decision_agent_id: str,
+    decision_provenance: Mapping[str, Any] | None = None,
+    signing_key_id: str | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Issue a signed receipt for a server-verified external side effect."""
+
+    provider = execution_provider.strip()
+    operation_id = external_operation_id.strip()
+    if not provider or not operation_id:
+        raise ValueError("external receipt provider and operation id are required")
+    if not 0.0 <= effectiveness <= 1.0 or not 0.0 <= confidence <= 1.0:
+        raise ValueError("external receipt scores must be between 0 and 1")
+    if decision_revision != DECISION_CONTRACT_REVISION:
+        raise ValueError("external receipt decision revision is unsupported")
+    issued_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    receipt_id = str(
+        uuid5(
+            NAMESPACE_URL,
+            f"decisionvault-external:{provider}:{decision_snapshot_id}",
+        )
+    )
+    payload: dict[str, Any] = {
+        "version": EXTERNAL_RECEIPT_VERSION,
+        "receipt_id": receipt_id,
+        "scope_id": scope_id,
+        "agent_id": agent_id,
+        "situation": situation,
+        "strategy": strategy.value,
+        "scenario": "external_verified_execution",
+        "outcome": outcome.value,
+        "effectiveness": float(effectiveness),
+        "confidence": float(confidence),
+        "execution_provider": provider,
+        "external_operation_id": operation_id,
+        "execution_evidence": dict(execution_evidence),
+        "decision_snapshot_id": decision_snapshot_id,
+        "decision_digest": decision_digest,
+        "decision_revision": decision_revision,
+        "decision_agent_id": decision_agent_id,
+        "decision_provenance": dict(decision_provenance or {}),
+        "issued_at": issued_at.isoformat(),
+    }
+    if signing_key_id:
+        payload["signing_key_id"] = signing_key_id
+    payload["signature"] = _sign(payload, signing_secret)
+    return payload
+
+
 def verify_execution_receipt(
     payload: Any,
     *,
@@ -377,7 +446,11 @@ def verify_execution_receipt(
         raise ValueError("execution receipt signature is invalid")
 
     version = int(payload.get("version", 0))
-    if version not in {LEGACY_RECEIPT_VERSION, RECEIPT_VERSION}:
+    if version not in {
+        LEGACY_RECEIPT_VERSION,
+        RECEIPT_VERSION,
+        EXTERNAL_RECEIPT_VERSION,
+    }:
         raise ValueError("unsupported execution receipt version")
 
     scope_id = str(payload.get("scope_id", "")).strip()
@@ -410,19 +483,34 @@ def verify_execution_receipt(
     if not 0.0 <= effectiveness <= 1.0 or not 0.0 <= confidence <= 1.0:
         raise ValueError("execution receipt scores must be between 0 and 1")
 
-    scenario_outcomes = SANDBOX_OUTCOMES.get(scenario)
-    if scenario_outcomes is None:
-        raise ValueError("execution receipt scenario is unsupported")
-    expected_outcome, expected_effectiveness = scenario_outcomes[strategy]
-    if outcome != expected_outcome or abs(effectiveness - expected_effectiveness) > 1e-9:
-        raise ValueError("execution receipt outcome does not match sandbox scenario")
+    execution_provider: str | None = None
+    external_operation_id: str | None = None
+    execution_evidence: Mapping[str, Any] | None = None
+    if version == EXTERNAL_RECEIPT_VERSION:
+        execution_provider = str(payload.get("execution_provider", "")).strip() or None
+        external_operation_id = (
+            str(payload.get("external_operation_id", "")).strip() or None
+        )
+        evidence = payload.get("execution_evidence", {})
+        if not execution_provider or not external_operation_id:
+            raise ValueError("external execution receipt is missing provider binding")
+        if not isinstance(evidence, dict) or not bool(evidence.get("verified")):
+            raise ValueError("external execution receipt is missing verified evidence")
+        execution_evidence = evidence
+    else:
+        scenario_outcomes = SANDBOX_OUTCOMES.get(scenario)
+        if scenario_outcomes is None:
+            raise ValueError("execution receipt scenario is unsupported")
+        expected_outcome, expected_effectiveness = scenario_outcomes[strategy]
+        if outcome != expected_outcome or abs(effectiveness - expected_effectiveness) > 1e-9:
+            raise ValueError("execution receipt outcome does not match sandbox scenario")
 
     decision_snapshot_id = str(payload.get("decision_snapshot_id", "")).strip() or None
     decision_digest = str(payload.get("decision_digest", "")).strip() or None
     decision_revision = str(payload.get("decision_revision", "")).strip() or None
     decision_agent_id = str(payload.get("decision_agent_id", "")).strip() or None
     decision_provenance: Mapping[str, Any] | None = None
-    if version == RECEIPT_VERSION:
+    if version in {RECEIPT_VERSION, EXTERNAL_RECEIPT_VERSION}:
         if not all(
             (decision_snapshot_id, decision_digest, decision_revision, decision_agent_id)
         ):
@@ -453,6 +541,9 @@ def verify_execution_receipt(
         decision_revision=decision_revision,
         decision_agent_id=decision_agent_id,
         decision_provenance=decision_provenance,
+        execution_provider=execution_provider,
+        external_operation_id=external_operation_id,
+        execution_evidence=execution_evidence,
     )
 
 

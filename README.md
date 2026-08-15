@@ -435,6 +435,32 @@ AWS Lambda /execute
 → NVIDIA bounded explanation
 ```
 
+DecisionVault also has a **real external-execution adapter** for safe proof of
+side effects outside the Lambda/Cockroach sandbox. The current adapter is
+server-bound to the public test repository
+`yfj898/decisionvault-execution-sandbox` and writes one deterministic GitHub
+Contents resource per signed decision snapshot:
+
+```text
+signed decision snapshot
+→ fixed GitHub repository
+→ decisionvault-executions/<snapshot-id>.json
+→ exact-path read-back verification
+→ signed external execution receipt v3
+```
+
+The deterministic path is the external idempotency key. Replays never search an
+issue list or create a second resource; a concurrent create can only collide on
+the same path and is reconciled by exact GET. Caller-supplied providers,
+repositories, URLs, titles, and bodies are rejected. The real adapter records
+`Outcome.UNKNOWN`: proving that a GitHub side effect happened is **not** treated
+as evidence that the underlying payment-recovery strategy succeeded. Therefore
+`/record` rejects that receipt with `business_outcome_unverified` instead of
+creating an L1 episode, and calibration also excludes `UNKNOWN` defensively.
+The external proof therefore cannot create a false positive long-term memory or
+calibration label. Production remains on `EXECUTION_PROVIDER=sandbox` until a
+dedicated least-privilege GitHub credential is provisioned.
+
 General agents cannot submit arbitrary outcome labels to `/record`. `/execute`
 derives the outcome from the server-controlled `EXECUTION_SANDBOX_SCENARIO` and
 rejects any caller-supplied `scenario`, then signs a receipt that binds agent
@@ -598,6 +624,8 @@ repository. See `docs/evidence/PHASE4_MANAGED_MCP.md`.
 - [x] Signed decision snapshot binding across `/decide` → `/execute`; stale snapshots fail HTTP 409
 - [x] Decider/executor role separation preserved; receipts audit both decision and execution identities
 - [x] Unique execution receipt idempotency boundary
+- [x] Real GitHub external side-effect adapter with deterministic resource idempotency + v3 receipt
+- [x] External execution proof kept separate from business-outcome learning (`UNKNOWN` does not calibrate memory)
 - [x] Typed/race-safe same-producer supersession boundary
 - [x] Conflict-aware multi-agent memory governance
 - [x] Staleness / supersession / candidate-crowding controls

@@ -8,6 +8,7 @@ from decisionvault.domain import Decision, DecisionGovernanceTrace, Outcome, Str
 from decisionvault.execution import (
     decision_provenance_payload,
     issue_decision_snapshot,
+    issue_external_receipt,
     issue_sandbox_receipt,
     verify_decision_snapshot,
     verify_execution_receipt,
@@ -246,5 +247,81 @@ def test_keyed_receipt_never_falls_back_to_a_different_key():
             expected_scope_id="team-a",
             expected_agent_id="executor-a",
             ttl_seconds=None,
+            now=NOW,
+        )
+
+
+def test_external_receipt_binds_verified_side_effect_without_claiming_business_success():
+    payload = issue_external_receipt(
+        scope_id="team-a",
+        agent_id="executor-a",
+        situation="replacement card uses stale merchant credential",
+        strategy=Strategy.REFRESH_PAYMENT_TOKEN,
+        execution_provider="github-contents-v1",
+        external_operation_id=(
+            "github:yfj898/decisionvault-execution-sandbox:"
+            "decisionvault-executions/example.json@blob7"
+        ),
+        execution_evidence={
+            "verified": True,
+            "object_type": "github_repository_file",
+            "repository": "yfj898/decisionvault-execution-sandbox",
+            "path": "decisionvault-executions/example.json",
+            "blob_sha": "blob7",
+        },
+        outcome=Outcome.UNKNOWN,
+        effectiveness=0.0,
+        confidence=1.0,
+        signing_secret=SECRET,
+        decision_snapshot_id="00000000-0000-0000-0000-000000000123",
+        decision_digest="d" * 64,
+        decision_revision="governed-adaptive-memory-v2",
+        decision_agent_id="planner-a",
+        now=NOW,
+    )
+    receipt = verify_execution_receipt(
+        payload,
+        signing_secret=SECRET,
+        expected_scope_id="team-a",
+        expected_agent_id="executor-a",
+        now=NOW,
+    )
+    assert receipt.version == 3
+    assert receipt.outcome == Outcome.UNKNOWN
+    assert receipt.execution_provider == "github-contents-v1"
+    assert receipt.external_operation_id.endswith("@blob7")
+    assert receipt.execution_evidence is not None
+    assert receipt.execution_evidence["verified"] is True
+
+
+def test_external_receipt_rejects_provider_tampering():
+    payload = issue_external_receipt(
+        scope_id="team-a",
+        agent_id="executor-a",
+        situation="stale token",
+        strategy=Strategy.GENERIC_RETRY,
+        execution_provider="github-contents-v1",
+        external_operation_id=(
+            "github:yfj898/decisionvault-execution-sandbox:"
+            "decisionvault-executions/tamper.json@blob8"
+        ),
+        execution_evidence={"verified": True, "issue_number": 8},
+        outcome=Outcome.UNKNOWN,
+        effectiveness=0.0,
+        confidence=1.0,
+        signing_secret=SECRET,
+        decision_snapshot_id="00000000-0000-0000-0000-000000000124",
+        decision_digest="e" * 64,
+        decision_revision="governed-adaptive-memory-v2",
+        decision_agent_id="planner-a",
+        now=NOW,
+    )
+    payload["execution_provider"] = "attacker-controlled"
+    with pytest.raises(ValueError, match="signature"):
+        verify_execution_receipt(
+            payload,
+            signing_secret=SECRET,
+            expected_scope_id="team-a",
+            expected_agent_id="executor-a",
             now=NOW,
         )

@@ -72,7 +72,9 @@ def main() -> int:
         "minimum_success_retention": args.minimum_success_retention,
         "maximum_harmful_rate": args.maximum_harmful_rate,
         "decision_rows": len(rows),
-        "labeled_outcomes": sum(row["outcome"] is not None for row in rows),
+        "labeled_outcomes": sum(
+            str(row.get("outcome") or "") in {"SUCCESS", "FAILED"} for row in rows
+        ),
         "guardrails": [
             "historical telemetry evaluates only monotone-stricter profiles",
             "a different executable challenger strategy is COUNTERFACTUAL_UNOBSERVED",
