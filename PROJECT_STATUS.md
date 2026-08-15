@@ -15,7 +15,21 @@ Baseline:
 8 tests PASS
 
 Current local verification:
-224 tests PASS
+232 tests PASS
+Telemetry retention / aging / sampling-bias v3: PRODUCTION PASS / champion unchanged
+V10 sampling schema: 3 statements PASS / sampling audit persisted / runtime still SELECT+INSERT only
+Telemetry retention: raw decision+outcome pairs 180d / aggregate calibration runs 730d / consolidator-only DELETE
+Sampling gate: label coverage >=80% / label-distribution TVD <=0.20 / scope+strategy diversity / >=5 per represented stratum / evidence span >=30d
+Long-term aging gate: >=2 memory-age buckets / >=5 samples with memory age >30d / recent-vs-older drift segments >=5 each / temporal TVD <=0.35
+Per-stratum challenger safety: scope / strategy / memory-age buckets each require >=95% success retention and <=5% harmful rate
+Latest production calibration revision: telemetry-calibration-v3 / observed=1 / sampling_gate_pass=false / NO_PROMOTION
+Latest sampling blockers: scope_coverage / strategy_coverage / evidence_span / memory_age_coverage / temporal drift not yet evaluable
+Production calibration history: v1=1 / v2=1 / v3=1 append-only runs
+Post-v10 semantic benchmark: 14/14 PASS
+Post-v10 adaptive CockroachDB+NVIDIA adversarial/concurrency smoke: 13/13 PASS / cleanup 0
+Post-v10 hosted readiness: HTTP 200 / calibration schema+config=True / errors=0
+Post-v10 hosted demo/governance: PASS / final business memory rows=0
+GitHub Actions run `31857083239` (`d7c815a`): SUCCESS for retention/sampling source commit
 Memory calibration loop v2: PRODUCTION PASS / champion unchanged
 V9 aggregate calibration schema: 4 statements PASS / runtime SELECT+INSERT only / consolidator SELECT only
 Persisted production calibration run: decision rows=2 / labeled outcomes=2 / memory-exposed observed=1 / INSUFFICIENT_REAL_TELEMETRY

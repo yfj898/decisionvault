@@ -166,6 +166,20 @@ promotion review is `NO_PROMOTION` and the champion is unchanged. Production
 evidence is in `docs/evidence/MEMORY_CALIBRATION_LOOP_V2.md` and
 `reports/memory-calibration-promotion-review.json`.
 
+The production evaluator also enforces **retention, aging, and sampling-bias
+coverage** rather than treating sample count as representativeness. Raw
+decision/outcome telemetry is bounded to 180 days while aggregate calibration
+runs are retained for 730 days. Challenger review additionally requires
+balanced scope/strategy strata, sufficient label coverage, at least 30 days of
+evidence, older-memory coverage, stable recent-vs-older distributions, and
+per-stratum safety for scope, strategy, and memory-age buckets. A sample that
+reaches `N >= 30` but remains biased returns
+`INSUFFICIENT_DISTRIBUTION_COVERAGE` rather than a promotion recommendation.
+The current real sample remains correctly blocked because it contains only one
+TEAM / `REFRESH_PAYMENT_TOKEN` memory-exposed outcome and no aged-memory or
+temporal-drift coverage. Evidence is in
+`docs/evidence/MEMORY_TELEMETRY_RETENTION_BIAS_V3.md`.
+
 Verified competition integrations:
 
 - CockroachDB Distributed Vector Indexing
