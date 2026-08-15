@@ -9,15 +9,19 @@ Phase 5 — Bounded model integration (NVIDIA live; Bedrock optional): PASS
 Phase 6 — AWS Lambda deployment: PASS
 Phase 7 — UI / production hardening: PASS
 Phase 8 — Benchmark / ablation: PASS
-Phase 9 — Demo / Devpost submission: SCREEN MASTER RECORDED (voiceover + public upload + submit pending)
+Phase 9 — Demo / Devpost submission: FINAL VIDEO READY (public upload + submit pending)
 
 Baseline:
 8 tests PASS
 
 Current local verification:
 257 tests PASS
-Final submission screen master: PASS / 166.763333s / H.264 High / yuv420p / 1920×1080 / 30fps nominal / full decode 0 errors
-Final screen master SHA-256: `f0d079f0ab4e63d6ac2d28484b244f8c32de587b357e4303cbdb72121c992dcd`
+Final clean submission screen master: PASS / 166.763000s / H.264 High / yuv420p / 1920×1080 / 30fps nominal / full decode 0 errors
+Final clean screen master SHA-256: `e87d43b01ca62f34004ec7a3563360b57d06dd6baadd314bfc88eb8947125d8f`
+Final English AI voiceover master: PASS / 166.763000s / H.264 High + AAC LC 48kHz stereo / full decode 0 errors
+Final voiceover SHA-256: `bba380ced5a4b6f3f116baf569138ac9fa29b4c82b81763254c80f49f42a68d8`
+Voiceover: `en-US-AndrewNeural` / seven timeline-aligned segments / +8% speaking rate / max volume -1.9 dB
+Clean-video visual review: Chrome Translate bubble closed before the story begins / 5s frame verified clean / guided cursor points at authority, causal-memory, conflict, external-learning, and production-proof evidence
 Final recording live gates: Memory OFF→ON causal proof PASS / CONFLICT_ABSTAIN PASS / DVI+MCP+UNKNOWN production evidence PASS
 Post-record production cleanup audit: all 8 business memory/outbox tables 0 / adaptive-cloud-* 0 / quality telemetry unchanged 2/2/3
 Real external execution v11: PASS / deterministic GitHub Contents side effect + exact-path replay + signed receipt v3

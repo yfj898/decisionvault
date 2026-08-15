@@ -39,6 +39,9 @@ DISPLAY="$DISPLAY_VALUE" "$CHROME" \
   --no-default-browser-check \
   --disable-session-crashed-bubble \
   --disable-infobars \
+  --disable-translate \
+  --disable-features=Translate,TranslateUI \
+  --lang=en-US \
   --remote-allow-origins='*' \
   --remote-debugging-port="$PORT" \
   --user-data-dir="$PROFILE" \

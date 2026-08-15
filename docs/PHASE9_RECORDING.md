@@ -67,25 +67,27 @@ The script:
 recordings/DecisionVault_Submission_Demo_2m45s.mp4
 ```
 
-The screen master is intentionally narration-free. Add the frozen narration
-from `docs/VIDEO_SCRIPT_2M45.md` in the voiceover stage, as with the previous
-submission workflow.
+The screen master remains available as a narration-free source. The accepted
+submission cut now also has the frozen English AI voiceover from
+`docs/VIDEO_SCRIPT_2M45.md` aligned as seven independent timeline segments.
 
 ## Recorded screen master
 
-Formal automated capture completed successfully on August 15, 2026:
+Final clean automated capture completed successfully on August 15, 2026. The
+recording launcher disables Chrome translation features, and the X11 automation
+also closes the built-in Translate bubble before the story begins. A frame at
+5 seconds was visually checked and is clean.
 
 ```text
 file: recordings/DecisionVault_Submission_Demo_2m45s.mp4
-duration: 166.763333 s (2:46.76)
+duration: 166.763000 s (2:46.76)
 codec/profile: H.264 High
 pixel format: yuv420p
 resolution: 1920×1080
 nominal frame rate: 30 fps
 decoded frames: 5003
 full-file decode errors: 0
-size: 58,992,581 bytes
-sha256: f0d079f0ab4e63d6ac2d28484b244f8c32de587b357e4303cbdb72121c992dcd
+sha256: e87d43b01ca62f34004ec7a3563360b57d06dd6baadd314bfc88eb8947125d8f
 ```
 
 The same master is copied outside the repository to:
@@ -94,10 +96,44 @@ The same master is copied outside the repository to:
 /home/bili-guo/Videos/录屏/DecisionVault_Submission_Demo_2m47s.mp4
 ```
 
+## Final English AI voiceover
+
+The accepted public-upload candidate is:
+
+```text
+file: recordings/DecisionVault_Submission_Demo_2m45s_Voiceover.mp4
+duration: 166.763000 s (2:46.76)
+video: H.264 High / yuv420p / 1920×1080 / 30 fps nominal
+audio: AAC LC / 48 kHz / stereo
+voice: en-US-AndrewNeural
+voice rate: +8%
+audio peak: -1.9 dB
+full-file decode errors: 0
+sha256: bba380ced5a4b6f3f116baf569138ac9fa29b4c82b81763254c80f49f42a68d8
+```
+
+The narration is generated in seven independent segments and delayed to the
+frozen section starts (`0, 18, 34, 80, 108, 138, 158` seconds). Each generated
+segment is shorter than its visual slot, so narration never overlaps the next
+section. The video stream is copied from the clean screen master rather than
+re-encoded during voiceover muxing.
+
+The final upload copy is also stored outside the repository at:
+
+```text
+/home/bili-guo/Videos/录屏/DecisionVault_Submission_Demo_2m47s_Voiceover.mp4
+```
+
 All four recording gates passed during the formal run. Post-record production
 cleanup was also verified: all eight business memory/outbox tables were empty,
 `adaptive-cloud-*` rows were zero, and retained quality telemetry remained
 `2 / 2 / 3`.
+
+The final visual choreography keeps the two real button interactions and adds
+only cursor guidance: the pointer walks the four Authority-boundary steps,
+Memory OFF, Memory ON, the causal PASS, conflict PASS, the external-learning
+boundary, then the five frozen production metrics. No runtime or UI business
+logic was changed for this recording pass.
 
 ## Frozen visual timeline
 

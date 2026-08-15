@@ -19,6 +19,7 @@ import ctypes
 import ctypes.util
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import secrets
@@ -248,12 +249,29 @@ class X11Mouse:
         self.display = self.x11.XOpenDisplay(display_name.encode())
         if not self.display:
             raise DemoFailure(f"cannot open X11 display {display_name}")
+        self.last_position = (120.0, 120.0)
+        self.xtst.XTestFakeMotionEvent(self.display, -1, 120, 120, 0)
+        self.x11.XFlush(self.display)
+
+    def move(self, x: int, y: int, *, duration: float = 0.55) -> None:
+        sx, sy = self.last_position
+        distance = math.hypot(x - sx, y - sy)
+        steps = max(10, min(32, int(distance / 45)))
+        for i in range(1, steps + 1):
+            ratio = i / steps
+            px = round(sx + (x - sx) * ratio)
+            py = round(sy + (y - sy) * ratio)
+            self.xtst.XTestFakeMotionEvent(self.display, -1, px, py, 0)
+            self.x11.XFlush(self.display)
+            time.sleep((duration * TIMING_SCALE) / steps)
+        self.last_position = (float(x), float(y))
 
     def click(self, x: int, y: int) -> None:
-        self.xtst.XTestFakeMotionEvent(self.display, -1, x, y, 0)
+        self.move(x, y, duration=0.45)
         self.xtst.XTestFakeButtonEvent(self.display, 1, 1, 0)
         self.xtst.XTestFakeButtonEvent(self.display, 1, 0, 0)
         self.x11.XFlush(self.display)
+        time.sleep(0.12 * TIMING_SCALE)
 
 
 def _token() -> str:
@@ -293,6 +311,21 @@ def _center(cdp: CDPClient, element_id: str) -> tuple[int, int]:
     )
     if not rect or rect["w"] < 2 or rect["h"] < 2:
         raise DemoFailure(f"element #{element_id} is not clickable")
+    return round(rect["x"]), round(rect["y"])
+
+
+def _center_text(cdp: CDPClient, selector: str, text: str) -> tuple[int, int]:
+    rect = cdp.evaluate(
+        "(() => {const nodes=[...document.querySelectorAll(%s)];"
+        "const e=nodes.find(n=>n.textContent.includes(%s));if(!e)return null;"
+        "const r=e.getBoundingClientRect();"
+        "const ox=screenX+Math.max(0,(outerWidth-innerWidth)/2);"
+        "const oy=screenY+Math.max(0,outerHeight-innerHeight);"
+        "return {x:r.left+r.width/2+ox,y:r.top+r.height/2+oy,w:r.width,h:r.height};})()"
+        % (json.dumps(selector), json.dumps(text))
+    )
+    if not rect or rect["w"] < 2 or rect["h"] < 2:
+        raise DemoFailure(f"cannot find visible element containing {text!r}")
     return round(rect["x"]), round(rect["y"])
 
 
@@ -338,6 +371,22 @@ def main() -> int:
             raise DemoFailure("live health banner did not become ready")
 
         print("PASS gate: 1920x1080 live AWS page ready")
+        # Chrome may still surface its built-in Google Translate bubble even
+        # with translate features disabled.  In kiosk mode its close button is
+        # a stable browser-overlay target near the top-right corner; clicking
+        # there is harmless when the bubble is absent and keeps the recording
+        # clean when it is present.
+        mouse.click(1890, 20)
+        _pause_until(started, 18.0)
+        for at, label in [
+            (21.5, "Agent A records outcome evidence"),
+            (25.0, "Governance removes stale"),
+            (28.5, "The deterministic policy"),
+            (32.0, "The execution gateway re-checks"),
+        ]:
+            mouse.move(*_center_text(cdp, ".step", label))
+            _pause_until(started, at)
+        mouse.move(*_center(cdp, "run"))
         _pause_until(started, 34.0)
 
         token = _token()
@@ -364,6 +413,11 @@ def main() -> int:
             raise DemoFailure("cross-agent proof completed without the expected PASS state")
         _scroll_to(cdp, "delta")
         print("PASS gate: Memory OFF/ON causal strategy change visible")
+        mouse.move(*_center(cdp, "offStrategy"))
+        _pause_until(started, 57.0)
+        mouse.move(*_center(cdp, "onStrategy"))
+        _pause_until(started, 66.0)
+        mouse.move(*_center(cdp, "delta"))
         _pause_until(started, 80.0)
 
         _scroll_to(cdp, "govern")
@@ -386,6 +440,7 @@ def main() -> int:
             )
         _scroll_to(cdp, "governanceDelta")
         print("PASS gate: contradictory shared memory abstention visible")
+        mouse.move(*_center(cdp, "governanceDelta"))
         _pause_until(started, 108.0)
 
         _scroll_to(cdp, "submissionEvidence")
@@ -400,7 +455,17 @@ def main() -> int:
         if not evidence_pass:
             raise DemoFailure("submission evidence panel is incomplete")
         print("PASS gate: DVI / MCP / execution-learning / production evidence visible")
-        _pause_until(started, 158.0)
+        mouse.move(*_center_text(cdp, ".evidence-item", "External execution is not automatic learning"))
+        _pause_until(started, 138.0)
+        for at, label in [
+            (142.0, "257/257"),
+            (146.0, "14/14"),
+            (150.0, "latest 30-minute soak transport failures"),
+            (154.0, "latest 30-minute soak validation failures"),
+            (158.0, "post-run business-memory leakage"),
+        ]:
+            mouse.move(*_center_text(cdp, ".metric", label))
+            _pause_until(started, at)
 
         cdp.evaluate("window.scrollTo({top:0,behavior:'smooth'});true")
         time.sleep(1.0)
