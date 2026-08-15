@@ -1,0 +1,50 @@
+{
+  "duration_minutes": 30.0,
+  "finished_at": "2026-08-15T06:27:49.389995+00:00",
+  "interval_seconds": 10.0,
+  "iterations": 166,
+  "latency_ms": {
+    "/demo": {
+      "count": 83,
+      "p50": 7843.861,
+      "p95": 10267.616,
+      "p99": 11050.974
+    },
+    "/governance-demo": {
+      "count": 83,
+      "p50": 7969.426,
+      "p95": 9908.906,
+      "p99": 10217.088
+    },
+    "/health/ready": {
+      "count": 166,
+      "p50": 293.218,
+      "p95": 3982.319,
+      "p99": 4500.147
+    },
+    "overall": {
+      "count": 332,
+      "mean": 4881.619,
+      "p50": 6919.231,
+      "p95": 9527.838,
+      "p99": 10865.601
+    }
+  },
+  "passed": true,
+  "started_at": "2026-08-15T05:57:41.977967+00:00",
+  "status_counts": {
+    "/demo": {
+      "200": 83
+    },
+    "/governance-demo": {
+      "200": 83
+    },
+    "/health/ready": {
+      "200": 166
+    }
+  },
+  "telemetry_pollution_avoided": true,
+  "transport_failures": 0,
+  "validation_failure_count": 0,
+  "validation_failure_types": []
+}

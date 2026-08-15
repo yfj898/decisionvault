@@ -1,10 +1,16 @@
 from __future__ import annotations
 
-from urllib.error import HTTPError
+import time
+from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
 NVIDIA_API_BASE_URL = "https://integrate.api.nvidia.com/v1"
+
+# Server-side or throttle responses that are safe to retry once: the response
+# has already arrived, so no timeout budget was consumed, and the request is
+# idempotent (deterministic completions / deterministic embeddings).
+_RETRYABLE_HTTP_CODES = frozenset({429, 500, 502, 503, 504})
 
 
 def validate_nvidia_base_url(value: str | None) -> str:
@@ -45,8 +51,19 @@ class _RejectRedirects(HTTPRedirectHandler):
         )
 
 
-def open_nvidia_request(request: Request, *, timeout_seconds: float):
-    """Open a validated NVIDIA request without cross-origin redirect forwarding."""
+def open_nvidia_request(
+    request: Request,
+    *,
+    timeout_seconds: float,
+    retry_attempts: int = 1,
+    retry_delay_seconds: float = 1.0,
+):
+    """Open a validated NVIDIA request without cross-origin redirect forwarding.
+
+    Fast-failure errors (HTTP 429/5xx, connection-level failures) are retried
+    once with a short delay. Timeout errors are NOT retried: the timeout budget
+    is already consumed, and the Lambda deadline must remain guaranteed.
+    """
 
     allowed_urls = {
         f"{NVIDIA_API_BASE_URL}/embeddings",
@@ -54,7 +71,39 @@ def open_nvidia_request(request: Request, *, timeout_seconds: float):
     }
     if request.full_url not in allowed_urls:
         raise ValueError("refusing NVIDIA credential forwarding to a non-allowlisted URL")
-    return build_opener(_RejectRedirects()).open(request, timeout=timeout_seconds)
+    opener = build_opener(_RejectRedirects())
+    attempts = 1 + max(0, int(retry_attempts))
+    last_error: BaseException | None = None
+    for attempt in range(attempts):
+        try:
+            return opener.open(request, timeout=timeout_seconds)
+        except (HTTPError, URLError) as exc:
+            last_error = exc
+            if attempt + 1 >= attempts or not _is_retryable_open_error(exc):
+                raise
+            time.sleep(retry_delay_seconds)
+    if last_error is not None:
+        raise last_error
+    raise AssertionError("unreachable")
+
+
+def _is_retryable_open_error(exc: HTTPError | URLError) -> bool:
+    """True for failures that arrived fast and are safe to retry idempotently.
+
+    Timeout errors are excluded: the caller's timeout budget is already spent,
+    and a retry would exceed the Lambda deadline instead of healing it.
+    """
+
+    if isinstance(exc, HTTPError):
+        return exc.code in _RETRYABLE_HTTP_CODES
+    if isinstance(exc, URLError):
+        reason = exc.reason
+        if isinstance(reason, TimeoutError):
+            # socket.timeout is an alias of TimeoutError since Python 3.10.
+            return False
+        # ConnectionRefusedError, ConnectionResetError, gaierror (DNS), etc.
+        return isinstance(reason, (ConnectionError, OSError))
+    return False
 
 
 def open_fixed_bearer_request(
