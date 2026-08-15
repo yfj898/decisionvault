@@ -9,13 +9,17 @@ Phase 5 — Bounded model integration (NVIDIA live; Bedrock optional): PASS
 Phase 6 — AWS Lambda deployment: PASS
 Phase 7 — UI / production hardening: PASS
 Phase 8 — Benchmark / ablation: PASS
-Phase 9 — Demo / Devpost submission: READY FOR RECORDING (final video + submit pending)
+Phase 9 — Demo / Devpost submission: SCREEN MASTER RECORDED (voiceover + public upload + submit pending)
 
 Baseline:
 8 tests PASS
 
 Current local verification:
-245 tests PASS
+257 tests PASS
+Final submission screen master: PASS / 166.763333s / H.264 High / yuv420p / 1920×1080 / 30fps nominal / full decode 0 errors
+Final screen master SHA-256: `f0d079f0ab4e63d6ac2d28484b244f8c32de587b357e4303cbdb72121c992dcd`
+Final recording live gates: Memory OFF→ON causal proof PASS / CONFLICT_ABSTAIN PASS / DVI+MCP+UNKNOWN production evidence PASS
+Post-record production cleanup audit: all 8 business memory/outbox tables 0 / adaptive-cloud-* 0 / quality telemetry unchanged 2/2/3
 Real external execution v11: PASS / deterministic GitHub Contents side effect + exact-path replay + signed receipt v3
 External execution safety: caller cannot select provider/repository/URL/payload / provider failure 503 without receipt / external UNKNOWN outcome cannot enter L1 memory or calibration
 Real GitHub proof: first execution verified / idempotent replay verified / business_outcome_verified=false / broad local CLI token never copied into AWS

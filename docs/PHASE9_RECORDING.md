@@ -45,20 +45,59 @@ DECISIONVAULT_DEMO_TIMING_SCALE=0.05 python3 scripts/run_submission_demo.py
 
 ## Record
 
-1. Start OBS or the Ubuntu recorder.
-2. Run:
+Preferred formal path — fully automated, matching the prior BridgeSAT-style
+isolated 1920×1080 recording workflow but without requiring manual recorder
+start/stop:
 
 ```bash
-python3 scripts/run_submission_demo.py
+bash scripts/record_submission_video.sh
 ```
 
-3. Read the frozen narration from `docs/VIDEO_SCRIPT_2M45.md`.
-4. Do not touch the mouse while automation is running.
-5. Stop recording after:
+The script:
+
+1. starts an isolated `1920x1080x24` Xvfb display;
+2. starts Chrome in kiosk mode on the live AWS Lambda app;
+3. records that display at 30 fps through GStreamer `ximagesrc → x264enc → mp4mux`;
+4. runs `scripts/run_submission_demo.py` with the frozen 2:45 timeline;
+5. cleanly sends EOS to the MP4 recorder;
+6. verifies H.264 / 1920×1080 / 30 fps / `<3:00` with `ffprobe`;
+7. writes the accepted master to:
 
 ```text
-PASS: submission automation complete
+recordings/DecisionVault_Submission_Demo_2m45s.mp4
 ```
+
+The screen master is intentionally narration-free. Add the frozen narration
+from `docs/VIDEO_SCRIPT_2M45.md` in the voiceover stage, as with the previous
+submission workflow.
+
+## Recorded screen master
+
+Formal automated capture completed successfully on August 15, 2026:
+
+```text
+file: recordings/DecisionVault_Submission_Demo_2m45s.mp4
+duration: 166.763333 s (2:46.76)
+codec/profile: H.264 High
+pixel format: yuv420p
+resolution: 1920×1080
+nominal frame rate: 30 fps
+decoded frames: 5003
+full-file decode errors: 0
+size: 58,992,581 bytes
+sha256: f0d079f0ab4e63d6ac2d28484b244f8c32de587b357e4303cbdb72121c992dcd
+```
+
+The same master is copied outside the repository to:
+
+```text
+/home/bili-guo/Videos/录屏/DecisionVault_Submission_Demo_2m47s.mp4
+```
+
+All four recording gates passed during the formal run. Post-record production
+cleanup was also verified: all eight business memory/outbox tables were empty,
+`adaptive-cloud-*` rows were zero, and retained quality telemetry remained
+`2 / 2 / 3`.
 
 ## Frozen visual timeline
 
