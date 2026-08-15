@@ -461,6 +461,17 @@ The external proof therefore cannot create a false positive long-term memory or
 calibration label. Production remains on `EXECUTION_PROVIDER=sandbox` until a
 dedicated least-privilege GitHub credential is provisioned.
 
+The deployed external-execution source was then exercised with a **30-minute
+hosted route soak**: 165 iterations / 330 requests across readiness, `/demo`, and
+`/governance-demo`, with every request returning HTTP 200 and zero transport or
+contract-validation failures. The required post-soak database audit nevertheless
+found one governance-demo L2 projection residue, exposing a cleanup-vs-scheduled-
+consolidation race that ordinary HTTP monitoring would have missed. The cleanup
+order was corrected so authoritative L1 deletion commits before adaptive/outbox
+deletion; a post-fix 6-minute stress crossing the scheduled consolidation interval
+finished with all eight business memory/outbox tables at zero. Full evidence is
+in `docs/evidence/REAL_EXTERNAL_EXECUTION_SOAK_V11.md`.
+
 General agents cannot submit arbitrary outcome labels to `/record`. `/execute`
 derives the outcome from the server-controlled `EXECUTION_SANDBOX_SCENARIO` and
 rejects any caller-supplied `scenario`, then signs a receipt that binds agent

@@ -17,53 +17,68 @@ from decisionvault.memory.cockroach import CockroachVectorMemoryStore
 from decisionvault.memory.connection import psycopg_connection_factory
 from decisionvault.memory.consolidation import CockroachMemoryConsolidationService
 from decisionvault.memory.embedding import NvidiaSemanticEmbedder, deterministic_text_embedding
+from decisionvault.memory.retry import retry_cockroach_serialization
+
+
+ADAPTIVE_CLOUD_TEST_PREFIX = "adaptive-cloud-"
 
 
 def _delete_prefix(connection_factory, prefix: str) -> None:
-    conn = connection_factory()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "DELETE FROM decision_memory_consolidation_outbox WHERE scope_id LIKE %s",
-                (f"{prefix}%",),
-            )
-            cur.execute(
-                """
-                DELETE FROM decision_governed_memory_support
-                WHERE memory_id IN (
-                    SELECT memory_id FROM decision_governed_memories
-                    WHERE scope_id LIKE %s
+    def operation() -> None:
+        conn = connection_factory()
+        try:
+            with conn.cursor() as cur:
+                # Delete authoritative L1 first so a concurrent consolidator
+                # must serialize against the evidence removal before derived
+                # projection cleanup completes.
+                cur.execute(
+                    "DELETE FROM decision_memory_heads WHERE scope_id LIKE %s",
+                    (f"{prefix}%",),
                 )
-                """,
-                (f"{prefix}%",),
-            )
-            cur.execute(
-                "DELETE FROM decision_governed_memories WHERE scope_id LIKE %s",
-                (f"{prefix}%",),
-            )
-            cur.execute(
-                "DELETE FROM decision_memory_consolidation_candidates WHERE scope_id LIKE %s",
-                (f"{prefix}%",),
-            )
-            cur.execute(
-                "DELETE FROM decision_strategy_effectiveness WHERE scope_id LIKE %s",
-                (f"{prefix}%",),
-            )
-            cur.execute(
-                "DELETE FROM decision_memory_revocations WHERE scope_id LIKE %s",
-                (f"{prefix}%",),
-            )
-            cur.execute(
-                "DELETE FROM decision_memory_heads WHERE scope_id LIKE %s",
-                (f"{prefix}%",),
-            )
-            cur.execute(
-                "DELETE FROM decision_episodes WHERE scope_id LIKE %s",
-                (f"{prefix}%",),
-            )
-        conn.commit()
-    finally:
-        conn.close()
+                cur.execute(
+                    "DELETE FROM decision_episodes WHERE scope_id LIKE %s",
+                    (f"{prefix}%",),
+                )
+                cur.execute(
+                    "DELETE FROM decision_memory_consolidation_outbox WHERE scope_id LIKE %s",
+                    (f"{prefix}%",),
+                )
+                cur.execute(
+                    """
+                    DELETE FROM decision_governed_memory_support
+                    WHERE memory_id IN (
+                        SELECT memory_id FROM decision_governed_memories
+                        WHERE scope_id LIKE %s
+                    )
+                    """,
+                    (f"{prefix}%",),
+                )
+                cur.execute(
+                    "DELETE FROM decision_governed_memories WHERE scope_id LIKE %s",
+                    (f"{prefix}%",),
+                )
+                cur.execute(
+                    "DELETE FROM decision_memory_consolidation_candidates WHERE scope_id LIKE %s",
+                    (f"{prefix}%",),
+                )
+                cur.execute(
+                    "DELETE FROM decision_strategy_effectiveness WHERE scope_id LIKE %s",
+                    (f"{prefix}%",),
+                )
+                cur.execute(
+                    "DELETE FROM decision_memory_revocations WHERE scope_id LIKE %s",
+                    (f"{prefix}%",),
+                )
+            conn.commit()
+        except Exception:
+            rollback = getattr(conn, "rollback", None)
+            if callable(rollback):
+                rollback()
+            raise
+        finally:
+            conn.close()
+
+    retry_cockroach_serialization(operation, max_attempts=5)
 
 
 def _remaining_rows(connection_factory, prefix: str) -> dict[str, int]:
@@ -269,11 +284,14 @@ def main() -> int:
         semantic_embedder=semantic.embed_passage,
         semantic_embedding_space=semantic.embedding_space,
     )
-    prefix = f"adaptive-cloud-{uuid4().hex[:10]}"
+    prefix = f"{ADAPTIVE_CLOUD_TEST_PREFIX}{uuid4().hex[:10]}"
     checks: dict[str, bool] = {}
     exit_code = 2
     cleanup_ok = False
-    _delete_prefix(cleanup_connection_factory, prefix)
+    # This namespace is reserved for this real-cloud smoke. Clean abandoned
+    # prefixes from a prior interrupted/serialization-aborted run before
+    # starting a new one so one failed test cannot pollute later global audits.
+    _delete_prefix(cleanup_connection_factory, ADAPTIVE_CLOUD_TEST_PREFIX)
     try:
         positive_scope = f"{prefix}-positive"
         _seed_pair(store, positive_scope)
@@ -521,7 +539,10 @@ def main() -> int:
         exit_code = 0 if passed_count == len(checks) else 2
     finally:
         _delete_prefix(cleanup_connection_factory, prefix)
-        remaining = _remaining_rows(cleanup_connection_factory, prefix)
+        remaining = _remaining_rows(
+            cleanup_connection_factory,
+            ADAPTIVE_CLOUD_TEST_PREFIX,
+        )
         cleanup_ok = all(value == 0 for value in remaining.values())
         print("adaptive_cloud_cleanup=" + ("PASS" if cleanup_ok else "FAIL"))
         print("adaptive_cloud_temporary_rows=" + str(sum(remaining.values())))

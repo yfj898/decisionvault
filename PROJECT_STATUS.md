@@ -15,7 +15,22 @@ Baseline:
 8 tests PASS
 
 Current local verification:
-232 tests PASS
+245 tests PASS
+Real external execution v11: PASS / deterministic GitHub Contents side effect + exact-path replay + signed receipt v3
+External execution safety: caller cannot select provider/repository/URL/payload / provider failure 503 without receipt / external UNKNOWN outcome cannot enter L1 memory or calibration
+Real GitHub proof: first execution verified / idempotent replay verified / business_outcome_verified=false / broad local CLI token never copied into AWS
+Production execution provider: still sandbox by design pending a dedicated least-privilege GitHub credential
+GitHub Actions run `31859278177` (`c6c64bd`): SUCCESS for external-execution source commit
+Post-c6 hosted readiness/demo/governance: PASS / execution_provider=sandbox / errors=0
+Post-c6 semantic benchmark: 14/14 PASS
+30-minute hosted route soak: 165 iterations / 330 requests / all HTTP 200 / transport failures 0 / validation failures 0 / overall p95 9819.796ms
+30-minute post-soak audit found one governance-demo L2 strategy projection residue; cleanup-vs-consolidation race reproduced by ordering review and fixed
+Cleanup race fix: `f6a208f` / authoritative L1 delete commits before adaptive/outbox delete
+GitHub Actions run `31860957000` (`f6a208f`): SUCCESS / Lambda Active+Successful / deployed CodeSha matched
+Post-fix 6-minute cleanup stress: 36 iterations / 72 requests / all HTTP 200 / failures 0 / crossed scheduled consolidation interval
+Post-fix final business memory/outbox rows: all 8 tables = 0 / retained quality telemetry unchanged 2 decisions + 2 outcomes + 3 calibration runs
+Adaptive smoke cleanup now retries Cockroach SQLSTATE 40001 transactions and self-heals the reserved `adaptive-cloud-*` namespace; final rerun 13/13 PASS / cleanup PASS / global business rows 0
+Evidence: `docs/evidence/REAL_EXTERNAL_EXECUTION_SOAK_V11.md`, `reports/github-execution-smoke.json`, `reports/production-soak.json`, `reports/cleanup-stress.json`
 Telemetry retention / aging / sampling-bias v3: PRODUCTION PASS / champion unchanged
 V10 sampling schema: 3 statements PASS / sampling audit persisted / runtime still SELECT+INSERT only
 Telemetry retention: raw decision+outcome pairs 180d / aggregate calibration runs 730d / consolidator-only DELETE
