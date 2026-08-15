@@ -953,6 +953,70 @@ def _delete_scope(scope_id: str) -> None:
         adaptive_conn.close()
 
 
+def _sweep_orphaned_adaptive_rows() -> dict[str, int]:
+    """Delete derived rows whose authoritative L1 head no longer exists.
+
+    _delete_scope removes L1 (heads/episodes) and the derived L2/L3/outbox rows
+    in two separate transactions because no least-privilege identity holds
+    DELETE on all eight tables. A crash between the two commits leaves derived
+    rows with no governing head. Those orphans are inert (consolidation is
+    head-driven and never repopulates a headless scope) but they are data
+    debris, so the scheduled consolidation-retry sweep removes them here.
+
+    Safety: outbox rows are enqueued in the same transaction that creates
+    their heads, so a row visible here with no head is by definition orphaned
+    and cannot belong to an in-flight record. The sweep is best-effort and
+    idempotent; serialization conflicts simply defer it to the next run.
+    """
+
+    conn = _consolidation_connection_factory()()
+    deleted: dict[str, int] = {}
+    try:
+        with conn.cursor() as cur:
+            statements = {
+                "outbox": """
+                    DELETE FROM decision_memory_consolidation_outbox
+                    WHERE scope_id NOT IN (
+                        SELECT scope_id FROM decision_memory_heads
+                    )
+                """,
+                "support": """
+                    DELETE FROM decision_governed_memory_support
+                    WHERE memory_id IN (
+                        SELECT memory_id FROM decision_governed_memories
+                        WHERE scope_id NOT IN (
+                            SELECT scope_id FROM decision_memory_heads
+                        )
+                    )
+                """,
+                "governed_memories": """
+                    DELETE FROM decision_governed_memories
+                    WHERE scope_id NOT IN (
+                        SELECT scope_id FROM decision_memory_heads
+                    )
+                """,
+                "candidates": """
+                    DELETE FROM decision_memory_consolidation_candidates
+                    WHERE scope_id NOT IN (
+                        SELECT scope_id FROM decision_memory_heads
+                    )
+                """,
+                "effectiveness": """
+                    DELETE FROM decision_strategy_effectiveness
+                    WHERE scope_id NOT IN (
+                        SELECT scope_id FROM decision_memory_heads
+                    )
+                """,
+            }
+            for name, sql in statements.items():
+                cur.execute(sql)
+                deleted[name] = int(cur.rowcount)
+        conn.commit()
+    finally:
+        conn.close()
+    return deleted
+
+
 def _health() -> dict[str, Any]:
     managed_secret = bool(os.getenv("DECISIONVAULT_SECRET_ARN", "").strip())
     embedding_revision = os.getenv("NVIDIA_EMBED_REVISION", "").strip()
@@ -2055,12 +2119,20 @@ def _handle_request(event: dict[str, Any], _context: Any) -> dict[str, Any]:
                     },
                 )
             consolidation_result = _drain_consolidation_outbox()
+            orphan_sweep: dict[str, int] | None = None
+            try:
+                orphan_sweep = _sweep_orphaned_adaptive_rows()
+            except Exception:
+                # Best-effort housekeeping; a transient failure must not
+                # fail the scheduled consolidation-retry run.
+                orphan_sweep = None
             return _json_response(
                 200,
                 {
                     "service": "decisionvault",
                     "scheduled": "consolidation-retry",
                     "result": consolidation_result,
+                    "orphan_sweep": orphan_sweep,
                     "memory_quality_calibration": (
                         _maybe_run_memory_quality_calibration()
                     ),

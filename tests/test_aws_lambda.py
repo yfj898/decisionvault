@@ -1272,6 +1272,17 @@ def test_scheduled_event_drains_durable_consolidation_outbox(monkeypatch):
     )
     monkeypatch.setattr(
         aws_lambda,
+        "_sweep_orphaned_adaptive_rows",
+        lambda: {
+            "outbox": 0,
+            "support": 0,
+            "governed_memories": 0,
+            "candidates": 0,
+            "effectiveness": 0,
+        },
+    )
+    monkeypatch.setattr(
+        aws_lambda,
         "_maybe_run_memory_quality_calibration",
         lambda: {"status": "NOT_DUE", "interval_hours": 24},
     )
@@ -1285,8 +1296,92 @@ def test_scheduled_event_drains_durable_consolidation_outbox(monkeypatch):
     body = json.loads(response["body"])
     assert body["scheduled"] == "consolidation-retry"
     assert body["result"]["completed"] == 2
+    assert body["orphan_sweep"]["governed_memories"] == 0
     assert body["memory_quality_calibration"]["status"] == "NOT_DUE"
     assert calls == ["security"]
+
+
+def test_scheduled_orphan_sweep_failure_is_best_effort(monkeypatch):
+    monkeypatch.setattr(
+        aws_lambda, "_refresh_runtime_security_state", lambda **_kwargs: None
+    )
+    monkeypatch.setattr(
+        aws_lambda, "_drain_consolidation_outbox", lambda: {"completed": 0}
+    )
+    monkeypatch.setattr(
+        aws_lambda,
+        "_sweep_orphaned_adaptive_rows",
+        lambda: (_ for _ in ()).throw(RuntimeError("transient")),
+    )
+    monkeypatch.setattr(
+        aws_lambda,
+        "_maybe_run_memory_quality_calibration",
+        lambda: {"status": "NOT_DUE"},
+    )
+
+    response = aws_lambda.lambda_handler(
+        {"source": "aws.events", "detail-type": "Scheduled Event"},
+        None,
+    )
+
+    assert response["statusCode"] == 200
+    body = json.loads(response["body"])
+    assert body["scheduled"] == "consolidation-retry"
+    assert body["orphan_sweep"] is None
+
+
+def test_orphan_sweep_deletes_only_headless_derived_rows(monkeypatch):
+    class FakeCursor:
+        def __init__(self):
+            self.executed = []
+            self.rowcount = 1
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, sql, params=None):
+            self.executed.append(sql)
+
+    class FakeConnection:
+        def __init__(self):
+            self.cursor_obj = FakeCursor()
+            self.committed = False
+
+        def cursor(self):
+            return self.cursor_obj
+
+        def commit(self):
+            self.committed = True
+
+        def close(self):
+            pass
+
+    connection = FakeConnection()
+    monkeypatch.setattr(
+        aws_lambda,
+        "_consolidation_connection_factory",
+        lambda: lambda: connection,
+    )
+
+    result = aws_lambda._sweep_orphaned_adaptive_rows()
+
+    assert connection.committed is True
+    assert result == {
+        "outbox": 1,
+        "support": 1,
+        "governed_memories": 1,
+        "candidates": 1,
+        "effectiveness": 1,
+    }
+    assert len(connection.cursor_obj.executed) == 5
+    # Every statement must be scoped to headless scopes only; rows whose
+    # governing head still exists are authoritative and must survive.
+    for sql in connection.cursor_obj.executed:
+        assert "scope_id NOT IN" in sql
+        assert "SELECT scope_id FROM decision_memory_heads" in sql
 
 
 def test_scheduled_memory_quality_calibration_is_read_only_threshold_evaluation(
