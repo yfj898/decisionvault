@@ -874,6 +874,27 @@ def _build_agent(
 
 
 def _delete_scope(scope_id: str) -> None:
+    # Delete authoritative L1 first. A consolidator that already locked/read the
+    # heads must serialize before this transaction can remove them; its derived
+    # L2/L3 writes are then removed by the second phase below. A consolidator
+    # that starts after this commit sees no heads and therefore cannot recreate
+    # a strategy projection. Reversing this order leaves a cleanup race where a
+    # claimed worker can repopulate L2 after adaptive rows were already deleted.
+    conn = psycopg_connection_factory()()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM decision_memory_heads WHERE scope_id = %s",
+                (scope_id,),
+            )
+            cur.execute(
+                "DELETE FROM decision_episodes WHERE scope_id = %s",
+                (scope_id,),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
     adaptive_conn = _consolidation_connection_factory()()
     try:
         with adaptive_conn.cursor() as cur:
@@ -906,21 +927,6 @@ def _delete_scope(scope_id: str) -> None:
         adaptive_conn.commit()
     finally:
         adaptive_conn.close()
-
-    conn = psycopg_connection_factory()()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "DELETE FROM decision_memory_heads WHERE scope_id = %s",
-                (scope_id,),
-            )
-            cur.execute(
-                "DELETE FROM decision_episodes WHERE scope_id = %s",
-                (scope_id,),
-            )
-        conn.commit()
-    finally:
-        conn.close()
 
 
 def _health() -> dict[str, Any]:

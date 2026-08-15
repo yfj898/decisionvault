@@ -1113,8 +1113,11 @@ def test_security_reconciliation_retires_absent_producers(monkeypatch):
 
 
 def test_demo_scope_cleanup_does_not_require_revocation_delete_privilege(monkeypatch):
+    events = []
+
     class Cursor:
-        def __init__(self):
+        def __init__(self, label):
+            self.label = label
             self.sql = []
 
         def __enter__(self):
@@ -1125,10 +1128,12 @@ def test_demo_scope_cleanup_does_not_require_revocation_delete_privilege(monkeyp
 
         def execute(self, sql, _params=None):
             self.sql.append(sql)
+            events.append((self.label, "execute", sql))
 
     class Connection:
-        def __init__(self):
-            self.cursor_value = Cursor()
+        def __init__(self, label):
+            self.label = label
+            self.cursor_value = Cursor(label)
             self.committed = False
 
         def cursor(self):
@@ -1136,26 +1141,43 @@ def test_demo_scope_cleanup_does_not_require_revocation_delete_privilege(monkeyp
 
         def commit(self):
             self.committed = True
+            events.append((self.label, "commit", ""))
 
         def close(self):
             pass
 
-    conn = Connection()
+    runtime_conn = Connection("runtime")
+    adaptive_conn = Connection("adaptive")
     monkeypatch.setattr(
         aws_lambda,
         "psycopg_connection_factory",
-        lambda: (lambda: conn),
+        lambda: (lambda: runtime_conn),
+    )
+    monkeypatch.setattr(
+        aws_lambda,
+        "_consolidation_connection_factory",
+        lambda: (lambda: adaptive_conn),
     )
 
     aws_lambda._delete_scope("phase7-demo-test")
 
-    statements = "\n".join(conn.cursor_value.sql)
+    statements = "\n".join(
+        runtime_conn.cursor_value.sql + adaptive_conn.cursor_value.sql
+    )
     assert "decision_governed_memory_support" in statements
     assert "decision_governed_memories" in statements
     assert "decision_memory_heads" in statements
     assert "decision_episodes" in statements
     assert "DELETE FROM decision_memory_revocations" not in statements
-    assert conn.committed is True
+    assert runtime_conn.committed is True
+    assert adaptive_conn.committed is True
+    runtime_commit = events.index(("runtime", "commit", ""))
+    first_adaptive_execute = next(
+        index
+        for index, event in enumerate(events)
+        if event[0] == "adaptive" and event[1] == "execute"
+    )
+    assert runtime_commit < first_adaptive_execute
 
 
 def test_consolidation_failure_defers_without_creating_ungoverned_memory(monkeypatch):
