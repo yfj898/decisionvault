@@ -1,76 +1,88 @@
-# DecisionVault — submission architecture
+# DecisionVault — Final Submission Architecture
 
-Use this as the single architecture frame for the Devpost gallery and the
-2:40–2:50 demo video. It is intentionally authority-first rather than a table-by-
-table implementation diagram.
+This is the final architecture diagram for README/Devpost/video narration.
 
-```mermaid
-flowchart TB
-    A[Agent / Request] --> B[Authenticated identity + bounded scope]
-    B --> C[Governed Retrieval]
+It is intentionally simple. Do not replace it with a decorative generated image.
+The goal is for a judge to understand the memory and authority boundaries in
+about 15 seconds.
 
-    subgraph CRDB[CockroachDB Cloud · authoritative memory]
-      L1[L1 episodic evidence + governed current heads]
-      DVI[Distributed Vector Index]
-      CONS[Deterministic consolidation + independent governance]
-      L23[L2 effectiveness + L3 procedural / AVOID memory]
-      MCP[Managed MCP Memory Auditor · read-only evidence path]
+## Primary diagram
 
-      L1 --> DVI
-      L1 --> CONS --> L23
-      L23 --> DVI
-      MCP -. audits provenance / plans .-> L1
-      MCP -. audits DVI plan .-> DVI
-    end
+```text
+ Agent A / Agent B
+       │
+       │ authenticated request + bounded scope
+       ▼
+┌──────────────────────────── DecisionVault on AWS Lambda ────────────────────────────┐
+│                                                                                     │
+│   Governed retrieval ──→ deterministic policy ──→ signed decision snapshot          │
+│          ▲                         │                         │                       │
+│          │                         │                         ▼                       │
+│          │                         │                current-policy revalidation      │
+│          │                         │                         │                       │
+│          │                         │                         ▼                       │
+│          │                         │                  execution adapter              │
+│          │                         │                         │                       │
+│          │                         │                         ▼                       │
+│          │                         │               side-effect verification          │
+│          │                         │                         │                       │
+│          │                         │                         ▼                       │
+│          │                         └────────────── signed execution receipt v3        │
+│          │                                                   │                       │
+└──────────┼───────────────────────────────────────────────────┼───────────────────────┘
+           │                                                   │
+           │                                                   ▼
+           │                                      business outcome verified?
+           │                                         │ YES         │ UNKNOWN
+           │                                         ▼             └──X no learning
+           │                                   verified experience
+           │                                         │
+           ▼                                         │
+┌────────────────────────────── CockroachDB Cloud ───┴────────────────────────────────┐
+│                                                                                     │
+│  L1 episodic evidence + governed heads                                               │
+│        │                                                                            │
+│        ├── Distributed Vector Index ──→ semantic recall                              │
+│        │                                                                            │
+│        └── deterministic consolidation ──→ L2 effectiveness ──→ L3 procedure/AVOID  │
+│                                                                                     │
+│  Managed MCP Memory Auditor ── read-only audit of memory, provenance, and DVI plan  │
+└─────────────────────────────────────────────────────────────────────────────────────┘
 
-    C --> DVI
-    DVI --> G[Applicability + negative veto + conflict governance]
-    G --> P[Deterministic policy]
-    P --> S[Signed decision snapshot]
-    S --> R[Current-policy revalidation]
-    R --> X[Execution adapter]
-    X --> V[External / sandbox verification]
-    V --> E[Signed execution receipt v3]
-    E --> O{Independent business outcome verified?}
-    O -->|YES| N[Verified experience]
-    O -->|UNKNOWN| Z[Blocked from long-term learning]
-    N --> L1
-
-    P --> NVA[NVIDIA explanation only]
-    NVA -. cannot change strategy .-> P
-
-    subgraph AWS[AWS Lambda · hosted trust boundary]
-      G
-      P
-      S
-      R
-      X
-      V
-      E
-      O
-      NVA
-    end
+ NVIDIA embeddings → semantic vectors
+ NVIDIA LLM        → explanation only; never decision authority
 ```
 
-## What the judge should understand in 15 seconds
+## The four things a judge should notice
 
-1. CockroachDB is not merely a vector store; it is the authoritative persistent
-   memory and governance system of record.
-2. Retrieved memory can influence a deterministic decision, but conflict can
-   produce a first-class non-executable `ABSTAIN`.
-3. Execution is bound to a signed decision snapshot and a verified signed
-   receipt.
-4. A successful external side effect is not automatically a successful business
-   outcome. `UNKNOWN` is blocked from long-term learning.
-5. NVIDIA is outside the decision-authority boundary: it provides embeddings and
-   bounded explanation, not the final strategy.
+1. **CockroachDB is the memory system of record.** It stores the durable evidence
+   and the governed adaptive-memory state.
+2. **Distributed Vector Indexing makes memory useful.** It recalls semantically
+   relevant outcome evidence for future agents.
+3. **Memory is influential, not authoritative.** Deterministic governance can
+   reject weak evidence or return non-executable `CONFLICT_ABSTAIN`.
+4. **Learning requires verified business outcome.** A verified external side
+   effect can remain `UNKNOWN` and is blocked from long-term memory.
+
+## 15-second architecture narration
+
+> CockroachDB is the authoritative memory layer. Distributed Vector Indexing
+> recalls relevant outcome evidence, then deterministic governance decides whether
+> that memory may influence the next action. AWS Lambda binds execution to a
+> signed snapshot and verified receipt. Only independently verified business
+> outcomes can return to long-term memory, while Managed MCP provides a separate
+> audit path.
 
 ## Devpost caption
 
-**DecisionVault authority path.** CockroachDB Cloud stores governed episodic,
-semantic, and procedural memory; Distributed Vector Indexing retrieves relevant
-evidence; deterministic governance decides whether that evidence may influence
-an action; signed snapshots and receipts bind execution; only independently
-verified business outcomes can re-enter long-term memory. Managed MCP provides a
-separate read-only audit path, while NVIDIA remains explanation-only after the
-strategy is committed.
+**DecisionVault separates memory from authority.** CockroachDB Cloud stores the
+durable outcome memory, Distributed Vector Indexing recalls relevant evidence,
+deterministic governance commits the action, AWS Lambda revalidates execution,
+and only verified business outcomes can be learned. Managed MCP independently
+audits memory provenance and the vector-search plan.
+
+## Video usage
+
+Do not switch to a generated diagram during the live video. Use the existing
+judge page's **Authority boundary** card for the first 34 seconds and use this
+diagram only as the canonical README/Devpost reference.

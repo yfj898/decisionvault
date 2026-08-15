@@ -41,8 +41,8 @@ TOKEN_FILE = Path(os.environ.get("DECISIONVAULT_DEMO_TOKEN_FILE", ".venv/demo-to
 TIMING_SCALE = float(os.environ.get("DECISIONVAULT_DEMO_TIMING_SCALE", "1"))
 if TIMING_SCALE <= 0:
     raise SystemExit("DECISIONVAULT_DEMO_TIMING_SCALE must be > 0")
-TARGET_AUTOMATION_SECONDS = 160.0 * TIMING_SCALE
-MAX_AUTOMATION_SECONDS = 176.0 if TIMING_SCALE >= 1 else 90.0
+TARGET_AUTOMATION_SECONDS = 165.0 * TIMING_SCALE
+MAX_AUTOMATION_SECONDS = 179.0 if TIMING_SCALE >= 1 else 90.0
 
 
 class DemoFailure(RuntimeError):
@@ -338,7 +338,7 @@ def main() -> int:
             raise DemoFailure("live health banner did not become ready")
 
         print("PASS gate: 1920x1080 live AWS page ready")
-        _pause_until(started, 38.0)
+        _pause_until(started, 34.0)
 
         token = _token()
         cdp.evaluate(
@@ -364,7 +364,7 @@ def main() -> int:
             raise DemoFailure("cross-agent proof completed without the expected PASS state")
         _scroll_to(cdp, "delta")
         print("PASS gate: Memory OFF/ON causal strategy change visible")
-        _pause_until(started, 88.0)
+        _pause_until(started, 80.0)
 
         _scroll_to(cdp, "govern")
         mouse.click(*_center(cdp, "govern"))
@@ -386,22 +386,25 @@ def main() -> int:
             )
         _scroll_to(cdp, "governanceDelta")
         print("PASS gate: contradictory shared memory abstention visible")
-        _pause_until(started, 116.0)
+        _pause_until(started, 108.0)
 
         _scroll_to(cdp, "submissionEvidence")
         evidence_pass = cdp.evaluate(
-            "document.getElementById('submissionEvidence').textContent.includes('14/14')"
+            "document.getElementById('submissionEvidence').textContent.includes('257/257')"
+            " && document.getElementById('submissionEvidence').textContent.includes('14/14')"
             " && document.getElementById('submissionEvidence').textContent.includes('VECTOR(1024)')"
             " && document.getElementById('submissionEvidence').textContent.includes('Managed MCP')"
+            " && document.getElementById('submissionEvidence').textContent.includes('Outcome.UNKNOWN')"
+            " && document.getElementById('submissionEvidence').textContent.includes('business_outcome_verified=false')"
         )
         if not evidence_pass:
             raise DemoFailure("submission evidence panel is incomplete")
-        print("PASS gate: DVI / MCP / benchmark evidence visible")
-        _pause_until(started, 148.0)
+        print("PASS gate: DVI / MCP / execution-learning / production evidence visible")
+        _pause_until(started, 158.0)
 
         cdp.evaluate("window.scrollTo({top:0,behavior:'smooth'});true")
         time.sleep(1.0)
-        _pause_until(started, 160.0)
+        _pause_until(started, 165.0)
         elapsed = time.monotonic() - started
         if elapsed > MAX_AUTOMATION_SECONDS:
             raise DemoFailure(f"automation exceeded recording ceiling: {elapsed:.1f}s")

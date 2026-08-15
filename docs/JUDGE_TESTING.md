@@ -1,36 +1,37 @@
-# Judge testing
+# Judge Testing — 90-Second Path
 
-## Live application
+The primary judge experience requires no clone, install, terminal, database
+credential, or model key.
 
-Open the public AWS Lambda Function URL listed in the Devpost **Try it out** field.
+## Open the live app
 
-`GET /` and `GET /health` are public and read-only. The one-click causal proof is
-protected so the public internet cannot create arbitrary DecisionVault memory.
+Use the public AWS Lambda Function URL from the Devpost **Try it out** field.
 
-## Fast judge path — about 90 seconds
+The page and health endpoint are public/read-only. The two proof actions require
+the private judge token supplied in Devpost testing instructions.
 
-### 1. Prove memory changes behavior
+## Test 1 — prove memory changes behavior
 
-The judge/demo token is supplied separately in the private Devpost testing
-instructions. It is intentionally not committed to Git or embedded in the page.
+1. Paste the private judge token into **Demo access token**.
+2. Click **Run live memory proof**.
+3. Confirm:
 
-1. Open the live DecisionVault page.
-2. Paste the judge/demo token.
-3. Click **Run live memory proof**.
-4. Observe Agent B with Memory OFF return `GENERIC_RETRY`.
-5. Observe Agent B with Memory ON recall Agent A's outcome and return
-   `REFRESH_PAYMENT_TOKEN`.
-6. Confirm `producer_agents=recovery-observer` in the Memory ON panel and the
-   cleanup result in the PASS banner.
+```text
+Memory OFF → GENERIC_RETRY
+Memory ON  → REFRESH_PAYMENT_TOKEN
+producer_agents=recovery-observer
+PASS · temporary scope cleaned
+```
 
-This is the causal claim: another agent changes its next decision because of
-durable governed outcome evidence in CockroachDB, not because the two agents
-shared an in-memory conversation.
+What this proves:
 
-### 2. Prove bad/conflicting memory cannot force execution
+> Agent B changed its next decision because of durable outcome evidence written
+> by Agent A into CockroachDB — not because the agents shared an in-memory chat.
+
+## Test 2 — prove conflicting memory cannot force execution
 
 1. Click **Run conflict safety proof**.
-2. Confirm the result shows:
+2. Confirm:
 
 ```text
 resolution=CONFLICT_ABSTAIN
@@ -39,51 +40,83 @@ strategy=null
 executable=false
 memory_conflict=true
 memory_influenced=false
+PASS
 ```
 
-`CONFLICT_ABSTAIN` is a first-class non-executable decision. The execution
-gateway re-runs current deterministic policy and will not sign an execution
-receipt while that abstention remains active.
+What this proves:
 
-### 3. Inspect production evidence without installing anything
+> Memory is allowed to influence a decision, but governance remains authoritative.
+> When evidence conflicts, DecisionVault refuses to execute.
 
-Scroll to **Reproducible submission evidence**. The page summarizes the native
-CockroachDB `VECTOR(1024)` semantic path, Distributed Vector Index, Managed MCP
-audit path, current production semantic benchmark, and production-hardening
-evidence.
+## Test 3 — inspect the production proof
 
-The strongest current frozen evidence is:
+Scroll to **Reproducible submission evidence** and confirm the page shows:
 
 ```text
 257 / 257 tests
-Production semantic benchmark: 14 / 14
-30-minute hosted soak: 0 transport failures
-30-minute hosted soak: 0 validation failures
-Post-run business-memory leakage: 0 rows
+14 / 14 production semantic benchmark
+30-minute hosted soak · 0 transport failures
+30-minute hosted soak · 0 validation failures
+0 rows post-run business-memory leakage
 ```
 
-The repository contains deeper reproducible evidence for judges who want to
-inspect the SQL plans, adversarial cases, external-execution proof, and soak
-reports. No local installation is required for the primary judging path.
+The same panel also shows the production CockroachDB semantic path and the
+external-learning safety boundary:
 
-The live runtime uses CockroachDB Cloud persistent memory, CockroachDB Distributed
-Vector Indexing, NVIDIA semantic embeddings, AWS Lambda, and the bounded NVIDIA
-explanation provider. Managed MCP has a separate reproducible memory-auditor CLI
-documented in the repository evidence.
+```text
+semantic_embedding VECTOR(1024)
+Distributed Vector Index
+Managed MCP
+Outcome.UNKNOWN
+business_outcome_verified=false
+```
 
-DecisionVault also contains a real external side-effect adapter proven against a
-dedicated GitHub Contents sandbox resource. Production intentionally remains on
-the bounded sandbox provider pending a dedicated least-privilege GitHub
-credential. The external proof is not part of the judge's mutating live path and
-does not need to be re-run.
+## What is actually running
 
-The external receipt contract deliberately uses `Outcome.UNKNOWN` and
-`business_outcome_verified=false`: external transport success cannot become
-positive long-term memory or a calibration label without an independent business
-outcome verifier.
+- **CockroachDB Cloud** — authoritative persistent multi-agent memory.
+- **Distributed Vector Indexing** — production semantic recall.
+- **Cloud Managed MCP Server** — separate MemoryAuditorAgent path for memory,
+  provenance, and vector-plan inspection.
+- **AWS Lambda** — hosted decision/execution trust boundary and judge UI.
+- **NVIDIA embeddings** — native 1024D semantic retrieval.
+- **NVIDIA LLM** — explanation only, never the final strategy authority.
 
-## Security boundary
+## External execution boundary
 
-Do not publish the demo token in README, screenshots, source code, or video. If a
-judge needs a replacement token, rotate `DEMO_API_TOKEN` in the Lambda environment
-and update the private Devpost testing instructions.
+DecisionVault contains a real external side-effect adapter proven against a
+dedicated deterministic GitHub Contents resource. Judges do **not** need to rerun
+that mutating proof.
+
+Production intentionally remains on the bounded sandbox execution provider until
+a dedicated least-privilege external credential is available.
+
+The important invariant is:
+
+```text
+external side effect verified
+≠
+business outcome verified
+```
+
+A verified external receipt therefore remains `Outcome.UNKNOWN` and cannot create
+positive long-term memory or calibration evidence.
+
+## Optional deep inspection
+
+For judges who want to inspect implementation evidence after the 90-second path:
+
+- `docs/evidence/PHASE3_DISTRIBUTED_VECTOR_INDEX.md`
+- `docs/evidence/PHASE4_MANAGED_MCP.md`
+- `docs/evidence/REAL_EXTERNAL_EXECUTION_SOAK_V11.md`
+- `docs/evidence/PRODUCTION_HARDENING_V6.md`
+
+The primary judging path does not require any local setup.
+
+## Security / availability
+
+- Never publish the demo token in README, screenshots, video, or source.
+- Keep the hosted application and private judge token active through the full
+  judging period.
+- If the judge token must be rotated, update the private Devpost testing field at
+  the same time.
+- Do not activate the production GitHub execution provider for judging.
