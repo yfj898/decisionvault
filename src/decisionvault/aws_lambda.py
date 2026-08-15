@@ -52,9 +52,12 @@ from decisionvault.memory_telemetry import (
     DEFAULT_CALIBRATION_MAXIMUM_HARMFUL_RATE,
     DEFAULT_CALIBRATION_MINIMUM_SAMPLES,
     DEFAULT_CALIBRATION_MINIMUM_SUCCESS_RETENTION,
+    DEFAULT_MEMORY_QUALITY_CALIBRATION_RUN_RETENTION_DAYS,
+    DEFAULT_MEMORY_QUALITY_RAW_RETENTION_DAYS,
     calibration_is_due,
     insert_decision_quality_event,
     insert_outcome_quality_event,
+    purge_memory_quality_retention,
     run_persisted_calibration,
 )
 from decisionvault.memory.embedding import (
@@ -553,6 +556,8 @@ def _run_memory_quality_calibration() -> dict[str, Any]:
         "observed_samples": run.summary.observed_samples,
         "recommendation": run.summary.recommendation,
         "recommended_profile": run.summary.recommended_profile,
+        "sampling_gate_pass": run.summary.sampling_gate_pass,
+        "sampling_blockers": list(run.summary.sampling_audit.get("blockers", ())),
         "minimum_samples": minimum_samples,
         "minimum_success_retention": minimum_success_retention,
         "maximum_harmful_rate": maximum_harmful_rate,
@@ -571,10 +576,18 @@ def _maybe_run_memory_quality_calibration() -> dict[str, Any]:
             "status": "NOT_DUE",
             "interval_hours": interval_hours,
         }
+    retention = purge_memory_quality_retention(
+        connection_factory=_consolidation_connection_factory(),
+        raw_retention_days=DEFAULT_MEMORY_QUALITY_RAW_RETENTION_DAYS,
+        calibration_run_retention_days=(
+            DEFAULT_MEMORY_QUALITY_CALIBRATION_RUN_RETENTION_DAYS
+        ),
+    )
     result = _run_memory_quality_calibration()
     return {
         "status": "COMPLETE",
         "interval_hours": interval_hours,
+        "retention": retention,
         **result,
     }
 
@@ -1081,6 +1094,7 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
                                maximum_harmful_rate, decision_rows, labeled_outcomes,
                                observed_samples, champion_successes, champion_harmful,
                                recommendation, recommended_profile, challengers,
+                               sampling_gate_pass, sampling_audit,
                                generated_at
                         FROM decision_memory_quality_calibration_runs LIMIT 0
                         """

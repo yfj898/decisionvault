@@ -17,12 +17,26 @@ from decisionvault.domain import Decision, Outcome, RecalledEpisode, Strategy
 
 
 MEMORY_QUALITY_TELEMETRY_REVISION = "memory-quality-telemetry-v1"
-MEMORY_QUALITY_CALIBRATION_REVISION = "telemetry-calibration-v1"
+MEMORY_QUALITY_CALIBRATION_REVISION = "telemetry-calibration-v3"
 DEFAULT_CALIBRATION_LOOKBACK_DAYS = 90
 DEFAULT_CALIBRATION_MINIMUM_SAMPLES = 30
 DEFAULT_CALIBRATION_MINIMUM_SUCCESS_RETENTION = 0.95
 DEFAULT_CALIBRATION_MAXIMUM_HARMFUL_RATE = 0.05
 DEFAULT_CALIBRATION_INTERVAL_HOURS = 24
+DEFAULT_CALIBRATION_MINIMUM_LABEL_COVERAGE = 0.80
+DEFAULT_CALIBRATION_MAXIMUM_LABEL_DISTRIBUTION_TVD = 0.20
+DEFAULT_CALIBRATION_MINIMUM_SCOPE_LEVELS = 2
+DEFAULT_CALIBRATION_MAXIMUM_DOMINANT_SCOPE_SHARE = 0.80
+DEFAULT_CALIBRATION_MINIMUM_STRATEGIES = 2
+DEFAULT_CALIBRATION_MAXIMUM_DOMINANT_STRATEGY_SHARE = 0.80
+DEFAULT_CALIBRATION_MINIMUM_STRATUM_SAMPLES = 5
+DEFAULT_CALIBRATION_MINIMUM_EVIDENCE_SPAN_DAYS = 30.0
+DEFAULT_CALIBRATION_MINIMUM_DRIFT_SEGMENT_SAMPLES = 5
+DEFAULT_CALIBRATION_MAXIMUM_TEMPORAL_TVD = 0.35
+DEFAULT_CALIBRATION_MINIMUM_MEMORY_AGE_BUCKETS = 2
+DEFAULT_CALIBRATION_MINIMUM_AGED_MEMORY_SAMPLES = 5
+DEFAULT_MEMORY_QUALITY_RAW_RETENTION_DAYS = 180
+DEFAULT_MEMORY_QUALITY_CALIBRATION_RUN_RETENTION_DAYS = 730
 
 
 @dataclass(frozen=True, slots=True)
@@ -339,6 +353,8 @@ class TelemetryCalibrationSummary:
     recommendation: str
     recommended_profile: str | None
     challengers: tuple[Mapping[str, Any], ...]
+    sampling_gate_pass: bool
+    sampling_audit: Mapping[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -377,6 +393,281 @@ def _memory_exposed(row: Mapping[str, Any]) -> bool:
     return episodic_candidates > 0 or adaptive_candidates > 0
 
 
+def _distribution(rows: Iterable[Mapping[str, Any]], field: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        value = row.get(field)
+        key = "NONE" if value is None else str(value)
+        counts[key] = counts.get(key, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _dominant_share(counts: Mapping[str, int]) -> float:
+    total = sum(int(value) for value in counts.values())
+    if total <= 0:
+        return 0.0
+    return max(int(value) for value in counts.values()) / total
+
+
+def _total_variation_distance(
+    left: Mapping[str, int], right: Mapping[str, int]
+) -> float:
+    left_total = sum(int(value) for value in left.values())
+    right_total = sum(int(value) for value in right.values())
+    if left_total <= 0 or right_total <= 0:
+        return 1.0
+    keys = set(left) | set(right)
+    return 0.5 * sum(
+        abs(
+            (int(left.get(key, 0)) / left_total)
+            - (int(right.get(key, 0)) / right_total)
+        )
+        for key in keys
+    )
+
+
+def _row_decided_at(row: Mapping[str, Any]) -> datetime | None:
+    value = row.get("decided_at")
+    if isinstance(value, datetime):
+        result = value
+    elif isinstance(value, str) and value:
+        try:
+            result = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    else:
+        return None
+    if result.tzinfo is None:
+        result = result.replace(tzinfo=timezone.utc)
+    return result.astimezone(timezone.utc)
+
+
+def _memory_age_days(row: Mapping[str, Any]) -> float | None:
+    features = row.get("quality_features", {}) or {}
+    if not isinstance(features, Mapping):
+        return None
+    values: list[float] = []
+    for layer_name in ("episodic", "adaptive"):
+        layer = features.get(layer_name, {}) or {}
+        if not isinstance(layer, Mapping):
+            continue
+        age_summary = layer.get("age_days") or {}
+        if not isinstance(age_summary, Mapping):
+            continue
+        value = age_summary.get("mean")
+        if isinstance(value, (int, float)):
+            values.append(max(0.0, float(value)))
+    return max(values) if values else None
+
+
+def _memory_age_bucket_name(row: Mapping[str, Any]) -> str:
+    age_days = _memory_age_days(row)
+    if age_days is None:
+        return "UNKNOWN"
+    if age_days <= 7:
+        return "0_7d"
+    if age_days <= 30:
+        return "8_30d"
+    if age_days <= 90:
+        return "31_90d"
+    if age_days <= 180:
+        return "91_180d"
+    return "181d_plus"
+
+
+def audit_telemetry_sampling_bias(
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    now: datetime | None = None,
+    minimum_label_coverage: float = DEFAULT_CALIBRATION_MINIMUM_LABEL_COVERAGE,
+    maximum_label_distribution_tvd: float = DEFAULT_CALIBRATION_MAXIMUM_LABEL_DISTRIBUTION_TVD,
+    minimum_scope_levels: int = DEFAULT_CALIBRATION_MINIMUM_SCOPE_LEVELS,
+    maximum_dominant_scope_share: float = DEFAULT_CALIBRATION_MAXIMUM_DOMINANT_SCOPE_SHARE,
+    minimum_strategies: int = DEFAULT_CALIBRATION_MINIMUM_STRATEGIES,
+    maximum_dominant_strategy_share: float = DEFAULT_CALIBRATION_MAXIMUM_DOMINANT_STRATEGY_SHARE,
+    minimum_stratum_samples: int = DEFAULT_CALIBRATION_MINIMUM_STRATUM_SAMPLES,
+    minimum_evidence_span_days: float = DEFAULT_CALIBRATION_MINIMUM_EVIDENCE_SPAN_DAYS,
+    minimum_drift_segment_samples: int = DEFAULT_CALIBRATION_MINIMUM_DRIFT_SEGMENT_SAMPLES,
+    maximum_temporal_tvd: float = DEFAULT_CALIBRATION_MAXIMUM_TEMPORAL_TVD,
+    minimum_memory_age_buckets: int = DEFAULT_CALIBRATION_MINIMUM_MEMORY_AGE_BUCKETS,
+    minimum_aged_memory_samples: int = DEFAULT_CALIBRATION_MINIMUM_AGED_MEMORY_SAMPLES,
+) -> dict[str, Any]:
+    """Audit whether labeled threshold evidence is representative enough.
+
+    The audit deliberately works only with low-cardinality categorical fields
+    already present in telemetry. It never groups by raw scope IDs, agents,
+    situations, episodes, memories, snapshots, or receipts.
+    """
+
+    items = list(rows)
+    exposed = [row for row in items if _memory_exposed(row)]
+    observed = [row for row in exposed if row.get("outcome")]
+    label_coverage = len(observed) / len(exposed) if exposed else 0.0
+
+    exposed_scope = _distribution(exposed, "scope_level")
+    observed_scope = _distribution(observed, "scope_level")
+    exposed_strategy = _distribution(exposed, "selected_strategy")
+    observed_strategy = _distribution(observed, "selected_strategy")
+    scope_label_tvd = _total_variation_distance(exposed_scope, observed_scope)
+    strategy_label_tvd = _total_variation_distance(exposed_strategy, observed_strategy)
+
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    timestamps = [value for row in observed if (value := _row_decided_at(row))]
+    evidence_span_days = (
+        max(0.0, (max(timestamps) - min(timestamps)).total_seconds() / 86400.0)
+        if timestamps
+        else 0.0
+    )
+    age_buckets = {"0_7d": 0, "8_30d": 0, "31_60d": 0, "61_90d": 0}
+    recent: list[Mapping[str, Any]] = []
+    older: list[Mapping[str, Any]] = []
+    for row in observed:
+        decided_at = _row_decided_at(row)
+        if decided_at is None:
+            continue
+        age_days = max(0.0, (current - decided_at).total_seconds() / 86400.0)
+        if age_days <= 7:
+            age_buckets["0_7d"] += 1
+        elif age_days <= 30:
+            age_buckets["8_30d"] += 1
+        elif age_days <= 60:
+            age_buckets["31_60d"] += 1
+        else:
+            age_buckets["61_90d"] += 1
+        (recent if age_days <= 30 else older).append(row)
+
+    drift_evaluable = (
+        len(recent) >= minimum_drift_segment_samples
+        and len(older) >= minimum_drift_segment_samples
+    )
+    recent_scope = _distribution(recent, "scope_level")
+    older_scope = _distribution(older, "scope_level")
+    recent_strategy = _distribution(recent, "selected_strategy")
+    older_strategy = _distribution(older, "selected_strategy")
+    scope_temporal_tvd = (
+        _total_variation_distance(recent_scope, older_scope)
+        if drift_evaluable
+        else None
+    )
+    strategy_temporal_tvd = (
+        _total_variation_distance(recent_strategy, older_strategy)
+        if drift_evaluable
+        else None
+    )
+
+    memory_age_buckets = {
+        "0_7d": 0,
+        "8_30d": 0,
+        "31_90d": 0,
+        "91_180d": 0,
+        "181d_plus": 0,
+    }
+    memory_age_samples = 0
+    aged_memory_samples = 0
+    for row in observed:
+        memory_age = _memory_age_days(row)
+        if memory_age is None:
+            continue
+        memory_age_samples += 1
+        if memory_age > 30:
+            aged_memory_samples += 1
+        if memory_age <= 7:
+            memory_age_buckets["0_7d"] += 1
+        elif memory_age <= 30:
+            memory_age_buckets["8_30d"] += 1
+        elif memory_age <= 90:
+            memory_age_buckets["31_90d"] += 1
+        elif memory_age <= 180:
+            memory_age_buckets["91_180d"] += 1
+        else:
+            memory_age_buckets["181d_plus"] += 1
+    occupied_memory_age_buckets = sum(
+        1 for value in memory_age_buckets.values() if value > 0
+    )
+    scope_minimum_stratum_samples = bool(observed_scope) and min(
+        observed_scope.values()
+    ) >= minimum_stratum_samples
+    strategy_minimum_stratum_samples = bool(observed_strategy) and min(
+        observed_strategy.values()
+    ) >= minimum_stratum_samples
+
+    gates = {
+        "label_coverage": label_coverage >= minimum_label_coverage,
+        "label_distribution": (
+            scope_label_tvd <= maximum_label_distribution_tvd
+            and strategy_label_tvd <= maximum_label_distribution_tvd
+        ),
+        "scope_coverage": (
+            len(observed_scope) >= minimum_scope_levels
+            and _dominant_share(observed_scope) <= maximum_dominant_scope_share
+            and scope_minimum_stratum_samples
+        ),
+        "strategy_coverage": (
+            len(observed_strategy) >= minimum_strategies
+            and _dominant_share(observed_strategy) <= maximum_dominant_strategy_share
+            and strategy_minimum_stratum_samples
+        ),
+        "evidence_span": evidence_span_days >= minimum_evidence_span_days,
+        "memory_age_coverage": (
+            memory_age_samples == len(observed)
+            and occupied_memory_age_buckets >= minimum_memory_age_buckets
+            and aged_memory_samples >= minimum_aged_memory_samples
+        ),
+        "temporal_drift_evaluable": drift_evaluable,
+        "temporal_drift": bool(
+            drift_evaluable
+            and scope_temporal_tvd is not None
+            and strategy_temporal_tvd is not None
+            and scope_temporal_tvd <= maximum_temporal_tvd
+            and strategy_temporal_tvd <= maximum_temporal_tvd
+        ),
+    }
+    blockers = tuple(name for name, passed in gates.items() if not passed)
+    return {
+        "policy": {
+            "minimum_label_coverage": minimum_label_coverage,
+            "maximum_label_distribution_tvd": maximum_label_distribution_tvd,
+            "minimum_scope_levels": minimum_scope_levels,
+            "maximum_dominant_scope_share": maximum_dominant_scope_share,
+            "minimum_strategies": minimum_strategies,
+            "maximum_dominant_strategy_share": maximum_dominant_strategy_share,
+            "minimum_stratum_samples": minimum_stratum_samples,
+            "minimum_evidence_span_days": minimum_evidence_span_days,
+            "minimum_drift_segment_samples": minimum_drift_segment_samples,
+            "maximum_temporal_tvd": maximum_temporal_tvd,
+            "minimum_memory_age_buckets": minimum_memory_age_buckets,
+            "minimum_aged_memory_samples": minimum_aged_memory_samples,
+        },
+        "memory_exposed_decisions": len(exposed),
+        "labeled_memory_exposed": len(observed),
+        "label_coverage": round(label_coverage, 6),
+        "scope_counts": observed_scope,
+        "strategy_counts": observed_strategy,
+        "dominant_scope_share": round(_dominant_share(observed_scope), 6),
+        "dominant_strategy_share": round(_dominant_share(observed_strategy), 6),
+        "scope_label_tvd": round(scope_label_tvd, 6),
+        "strategy_label_tvd": round(strategy_label_tvd, 6),
+        "evidence_span_days": round(evidence_span_days, 6),
+        "age_buckets": age_buckets,
+        "memory_age_samples": memory_age_samples,
+        "memory_age_buckets": memory_age_buckets,
+        "aged_memory_samples": aged_memory_samples,
+        "recent_samples": len(recent),
+        "older_samples": len(older),
+        "scope_temporal_tvd": (
+            round(scope_temporal_tvd, 6) if scope_temporal_tvd is not None else None
+        ),
+        "strategy_temporal_tvd": (
+            round(strategy_temporal_tvd, 6)
+            if strategy_temporal_tvd is not None
+            else None
+        ),
+        "gates": gates,
+        "blockers": blockers,
+        "passed": not blockers,
+    }
+
+
 def calibrate_from_telemetry_rows(
     rows: Iterable[Mapping[str, Any]],
     *,
@@ -389,8 +680,11 @@ def calibrate_from_telemetry_rows(
     # nothing about memory thresholds and would otherwise dilute harmful rates
     # and inflate challenger success retention. Keep only verified outcomes
     # where the live decision was actually exposed to governed memory evidence.
+    items = list(rows)
+    sampling_audit = audit_telemetry_sampling_bias(items)
+    sampling_gate_pass = bool(sampling_audit["passed"])
     observed = [
-        row for row in rows if row.get("outcome") and _memory_exposed(row)
+        row for row in items if row.get("outcome") and _memory_exposed(row)
     ]
     champion_successes = sum(
         _qualified_success(str(row["outcome"]), float(row["effectiveness"]))
@@ -417,6 +711,11 @@ def calibrate_from_telemetry_rows(
         suppressed_successes = 0
         suppressed_harmful = 0
         counterfactual_unobserved = 0
+        stratum_state: dict[str, dict[str, dict[str, int]]] = {
+            "scope_level": {},
+            "selected_strategy": {},
+            "memory_age_bucket": {},
+        }
         for row in observed:
             shadows = row.get("quality_features", {}).get("shadows", []) or []
             shadow = next(
@@ -433,9 +732,32 @@ def calibrate_from_telemetry_rows(
                 str(row["outcome"]), float(row["effectiveness"])
             )
             harmful = _harmful(str(row["outcome"]), float(row["effectiveness"]))
-            if bool(shadow.get("same_strategy_as_champion")) and bool(
+            retained_by_shadow = bool(shadow.get("same_strategy_as_champion")) and bool(
                 shadow.get("executable")
-            ):
+            )
+            stratum_keys = {
+                "scope_level": str(row.get("scope_level") or "UNKNOWN"),
+                "selected_strategy": str(row.get("selected_strategy") or "NONE"),
+                "memory_age_bucket": _memory_age_bucket_name(row),
+            }
+            for dimension, key in stratum_keys.items():
+                metrics = stratum_state[dimension].setdefault(
+                    key,
+                    {
+                        "samples": 0,
+                        "champion_successes": 0,
+                        "retained_samples": 0,
+                        "retained_successes": 0,
+                        "retained_harmful": 0,
+                    },
+                )
+                metrics["samples"] += 1
+                metrics["champion_successes"] += int(success)
+                if retained_by_shadow:
+                    metrics["retained_samples"] += 1
+                    metrics["retained_successes"] += int(success)
+                    metrics["retained_harmful"] += int(harmful)
+            if retained_by_shadow:
                 retained += 1
                 retained_successes += int(success)
                 retained_harmful += int(harmful)
@@ -448,6 +770,36 @@ def calibrate_from_telemetry_rows(
             retained_successes / champion_successes if champion_successes else 1.0
         )
         harmful_rate = retained_harmful / retained if retained else 0.0
+        stratum_results: dict[str, dict[str, dict[str, Any]]] = {}
+        stratum_safe = True
+        for dimension, groups in stratum_state.items():
+            stratum_results[dimension] = {}
+            for key, metrics in sorted(groups.items()):
+                champion_stratum_successes = metrics["champion_successes"]
+                retained_stratum_successes = metrics["retained_successes"]
+                retained_stratum_samples = metrics["retained_samples"]
+                retained_stratum_harmful = metrics["retained_harmful"]
+                stratum_retention = (
+                    retained_stratum_successes / champion_stratum_successes
+                    if champion_stratum_successes
+                    else 1.0
+                )
+                stratum_harmful_rate = (
+                    retained_stratum_harmful / retained_stratum_samples
+                    if retained_stratum_samples
+                    else 0.0
+                )
+                safe = bool(
+                    stratum_retention >= minimum_success_retention
+                    and stratum_harmful_rate <= maximum_harmful_rate
+                )
+                stratum_safe = stratum_safe and safe
+                stratum_results[dimension][key] = {
+                    **metrics,
+                    "success_retention": round(stratum_retention, 6),
+                    "harmful_rate": round(stratum_harmful_rate, 6),
+                    "safe": safe,
+                }
         result = {
             "profile": name,
             "retained_samples": retained,
@@ -458,13 +810,17 @@ def calibrate_from_telemetry_rows(
             "counterfactual_unobserved": counterfactual_unobserved,
             "success_retention": round(retention, 6),
             "harmful_rate": round(harmful_rate, 6),
+            "stratum_safe": stratum_safe,
+            "strata": stratum_results,
             "eligible": False,
         }
         result["eligible"] = bool(
             len(observed) >= minimum_samples
+            and sampling_gate_pass
             and counterfactual_unobserved == 0
             and retention >= minimum_success_retention
             and harmful_rate <= maximum_harmful_rate
+            and stratum_safe
             and retained_harmful <= champion_harmful
             and suppressed_harmful > 0
         )
@@ -484,6 +840,8 @@ def calibrate_from_telemetry_rows(
     recommendation = (
         "INSUFFICIENT_REAL_TELEMETRY"
         if len(observed) < minimum_samples
+        else "INSUFFICIENT_DISTRIBUTION_COVERAGE"
+        if not sampling_gate_pass
         else "KEEP_CHAMPION"
         if recommended is None
         else "RECOMMEND_CHALLENGER_SHADOW_ONLY"
@@ -496,6 +854,8 @@ def calibrate_from_telemetry_rows(
         recommendation=recommendation,
         recommended_profile=recommended,
         challengers=tuple(challenger_results),
+        sampling_gate_pass=sampling_gate_pass,
+        sampling_audit=sampling_audit,
     )
 
 
@@ -596,13 +956,15 @@ def insert_calibration_run(
                     minimum_samples, minimum_success_retention,
                     maximum_harmful_rate, decision_rows, labeled_outcomes,
                     observed_samples, champion_successes, champion_harmful,
-                    recommendation, recommended_profile, challengers, generated_at
+                    recommendation, recommended_profile, challengers,
+                    sampling_gate_pass, sampling_audit, generated_at
                 ) VALUES (
                     %s::UUID, %s, %s, %s,
                     %s, %s,
                     %s, %s, %s,
                     %s, %s, %s,
-                    %s, %s, %s::JSONB, %s
+                    %s, %s, %s::JSONB,
+                    %s, %s::JSONB, %s
                 )
                 """,
                 (
@@ -622,6 +984,12 @@ def insert_calibration_run(
                     summary.recommended_profile,
                     json.dumps(
                         list(summary.challengers),
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    bool(summary.sampling_gate_pass),
+                    json.dumps(
+                        dict(summary.sampling_audit),
                         sort_keys=True,
                         separators=(",", ":"),
                     ),
@@ -713,3 +1081,66 @@ def calibration_is_due(
     if last.tzinfo is None:
         last = last.replace(tzinfo=timezone.utc)
     return current - last.astimezone(timezone.utc) >= timedelta(hours=interval_hours)
+
+
+def purge_memory_quality_retention(
+    *,
+    connection_factory: Callable[[], object],
+    raw_retention_days: int = DEFAULT_MEMORY_QUALITY_RAW_RETENTION_DAYS,
+    calibration_run_retention_days: int = DEFAULT_MEMORY_QUALITY_CALIBRATION_RUN_RETENTION_DAYS,
+    now: datetime | None = None,
+) -> dict[str, int]:
+    """Bound raw telemetry retention while preserving long-lived aggregates.
+
+    Request runtime never receives DELETE. This function is intended for the
+    separately authenticated consolidation/maintenance identity. Raw decision
+    and outcome telemetry is kept for two 90-day calibration windows; aggregate
+    calibration runs are retained longer because they contain no join IDs or
+    user context.
+    """
+
+    if raw_retention_days <= DEFAULT_CALIBRATION_LOOKBACK_DAYS:
+        raise ValueError("raw telemetry retention must exceed calibration lookback")
+    if calibration_run_retention_days <= raw_retention_days:
+        raise ValueError("aggregate calibration retention must exceed raw retention")
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    raw_cutoff = current - timedelta(days=raw_retention_days)
+    aggregate_cutoff = current - timedelta(days=calibration_run_retention_days)
+    conn = connection_factory()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM decision_memory_quality_outcomes
+                WHERE decision_snapshot_id IN (
+                    SELECT decision_snapshot_id
+                    FROM decision_memory_quality_decisions
+                    WHERE decided_at < %s
+                )
+                """,
+                (raw_cutoff,),
+            )
+            outcomes = max(0, int(getattr(cur, "rowcount", 0) or 0))
+            cur.execute(
+                "DELETE FROM decision_memory_quality_decisions WHERE decided_at < %s",
+                (raw_cutoff,),
+            )
+            decisions = max(0, int(getattr(cur, "rowcount", 0) or 0))
+            cur.execute(
+                "DELETE FROM decision_memory_quality_calibration_runs WHERE generated_at < %s",
+                (aggregate_cutoff,),
+            )
+            calibration_runs = max(0, int(getattr(cur, "rowcount", 0) or 0))
+        conn.commit()
+    except Exception:
+        rollback = getattr(conn, "rollback", None)
+        if callable(rollback):
+            rollback()
+        raise
+    finally:
+        conn.close()
+    return {
+        "outcomes": outcomes,
+        "decisions": decisions,
+        "calibration_runs": calibration_runs,
+    }

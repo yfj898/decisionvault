@@ -4,6 +4,7 @@ from pathlib import Path
 
 from scripts.apply_memory_quality_telemetry_v8 import _statements
 from scripts.apply_memory_quality_calibration_v9 import _statements as _v9_statements
+from scripts.apply_memory_quality_sampling_v10 import _statements as _v10_statements
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -81,3 +82,24 @@ def test_v9_migration_is_idempotent_shaped_and_individually_committable():
     assert all(not item.upper().startswith("BEGIN") for item in statements)
     assert all(not item.upper().startswith("COMMIT") for item in statements)
     assert sum("CREATE TABLE IF NOT EXISTS" in item for item in statements) == 1
+
+
+def test_v10_sampling_audit_is_aggregate_and_retention_delete_is_maintenance_only():
+    sql = (ROOT / "scripts" / "memory_quality_sampling_v10.sql").read_text(
+        encoding="utf-8"
+    )
+    statements = _v10_statements(sql)
+    assert len(statements) == 3
+    assert "sampling_gate_pass BOOL NOT NULL DEFAULT false" in sql
+    assert "sampling_audit JSONB NOT NULL DEFAULT '{}'::JSONB" in sql
+    assert "GRANT DELETE" in sql
+    assert "TO decisionvault_consolidator" in sql
+    assert "TO decisionvault_runtime" not in sql
+    for forbidden in (
+        "scope_id STRING",
+        "agent_id STRING",
+        "producer_agent_id STRING",
+        "situation STRING",
+        "token STRING",
+    ):
+        assert forbidden not in sql

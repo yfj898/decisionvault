@@ -247,6 +247,8 @@ CREATE TABLE IF NOT EXISTS decision_memory_quality_calibration_runs (
     recommendation STRING NOT NULL,
     recommended_profile STRING,
     challengers JSONB NOT NULL,
+    sampling_gate_pass BOOL NOT NULL DEFAULT false,
+    sampling_audit JSONB NOT NULL DEFAULT '{}'::JSONB,
     generated_at TIMESTAMPTZ NOT NULL
 );
 

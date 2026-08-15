@@ -7,6 +7,7 @@ from pathlib import Path
 
 from decisionvault.memory.connection import psycopg_connection_factory
 from decisionvault.memory_telemetry import (
+    MEMORY_QUALITY_CALIBRATION_REVISION,
     calibrate_from_telemetry_rows,
     load_calibration_rows,
 )
@@ -64,6 +65,7 @@ def main() -> int:
         maximum_harmful_rate=args.maximum_harmful_rate,
     )
     payload = {
+        "calibration_revision": MEMORY_QUALITY_CALIBRATION_REVISION,
         "calibration": asdict(summary),
         "lookback_days": args.lookback_days,
         "minimum_samples": args.minimum_samples,

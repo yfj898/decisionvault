@@ -1118,6 +1118,44 @@ def test_scheduled_memory_quality_calibration_is_read_only_threshold_evaluation(
     assert calls == ["security"]
 
 
+def test_due_calibration_purges_retention_before_advancing_daily_run(monkeypatch):
+    calls = []
+    runtime_factory = object()
+    maintenance_factory = object()
+    monkeypatch.setattr(aws_lambda, "psycopg_connection_factory", lambda: runtime_factory)
+    monkeypatch.setattr(
+        aws_lambda,
+        "_consolidation_connection_factory",
+        lambda: maintenance_factory,
+    )
+    monkeypatch.setattr(
+        aws_lambda,
+        "calibration_is_due",
+        lambda **kwargs: kwargs["connection_factory"] is runtime_factory,
+    )
+    monkeypatch.setattr(
+        aws_lambda,
+        "purge_memory_quality_retention",
+        lambda **kwargs: calls.append(("retention", kwargs["connection_factory"]))
+        or {"outcomes": 0, "decisions": 0, "calibration_runs": 0},
+    )
+    monkeypatch.setattr(
+        aws_lambda,
+        "_run_memory_quality_calibration",
+        lambda: calls.append(("calibration", None))
+        or {
+            "observed_samples": 30,
+            "recommendation": "KEEP_CHAMPION",
+            "recommended_profile": None,
+        },
+    )
+
+    result = aws_lambda._maybe_run_memory_quality_calibration()
+
+    assert result["status"] == "COMPLETE"
+    assert calls == [("retention", maintenance_factory), ("calibration", None)]
+
+
 def test_unknown_scheduled_task_fails_closed(monkeypatch):
     monkeypatch.setattr(
         aws_lambda,

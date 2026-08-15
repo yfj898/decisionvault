@@ -40,7 +40,8 @@ def main() -> int:
                        minimum_samples, minimum_success_retention,
                        maximum_harmful_rate, decision_rows, labeled_outcomes,
                        observed_samples, champion_successes, champion_harmful,
-                       recommendation, recommended_profile, challengers, generated_at
+                       recommendation, recommended_profile, challengers,
+                       sampling_gate_pass, sampling_audit, generated_at
                 FROM decision_memory_quality_calibration_runs
                 ORDER BY generated_at DESC, run_id DESC
                 LIMIT 1
@@ -64,6 +65,7 @@ def main() -> int:
             "REVIEW_REQUIRED"
             if recommendation == "RECOMMEND_CHALLENGER_SHADOW_ONLY"
             and challenger is not None
+            and bool(row[15])
             else "NO_PROMOTION"
         )
         challengers = row[14] or []
@@ -72,6 +74,12 @@ def main() -> int:
                 challengers = json.loads(challengers)
             except json.JSONDecodeError:
                 challengers = []
+        sampling_audit = row[16] or {}
+        if isinstance(sampling_audit, str):
+            try:
+                sampling_audit = json.loads(sampling_audit)
+            except json.JSONDecodeError:
+                sampling_audit = {}
         payload = {
             "promotion_status": promotion_status,
             "automatic_threshold_mutation": False,
@@ -92,7 +100,9 @@ def main() -> int:
             "champion_profile": asdict(catalog["champion"]),
             "challenger_profile": asdict(challenger) if challenger is not None else None,
             "challengers": challengers,
-            "generated_at": row[15].isoformat(),
+            "sampling_gate_pass": bool(row[15]),
+            "sampling_audit": sampling_audit,
+            "generated_at": row[17].isoformat(),
             "required_promotion_gates": [
                 "human review of the persisted recommendation",
                 "explicit source-code threshold change",
