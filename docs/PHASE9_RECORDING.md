@@ -1,14 +1,15 @@
 # Phase 9 — Final recording runbook
 
-DecisionVault is code-complete through Phase 8. Phase 9 is intentionally limited
-to the public <3 minute video and the final Devpost submission.
+DecisionVault is code-complete through the latest production-hardening pass.
+Phase 9 is intentionally limited to the public <3 minute video and final Devpost
+submission; do not add runtime features during recording closeout.
 
 ## Frozen recording target
 
 - canvas: 1920×1080;
 - browser: Google Chrome kiosk mode;
-- automation target: about 160 seconds, leaving a few seconds to start/stop the
-  recorder while keeping the exported video below 3 minutes;
+- target exported duration: about 2:45, leaving meaningful margin below the
+  three-minute hard limit;
 - live application: the AWS Lambda Function URL already listed in the project
   metadata and Devpost package;
 - secret handling: `.venv/demo-token` is read locally and is never printed,
@@ -59,8 +60,14 @@ Keep the title, CockroachDB/AWS badges, and authority-boundary card visible.
 
 Narration focus:
 
-> RAG can remember information. DecisionVault remembers whether a decision
-> worked, and proves when that outcome should change another agent's next action.
+> AI agents can remember past information. But can we trust remembered outcomes
+> to influence real actions? DecisionVault turns long-term memory into governed
+> decision evidence.
+
+Use `docs/ARCHITECTURE_SUBMISSION.md` as the architecture frame. Focus on the
+authority boundary rather than implementation tables: CockroachDB governed
+memory → DVI recall → deterministic decision → signed snapshot → revalidated
+execution → verified receipt → independently verified outcome → memory.
 
 ### 0:38–1:28 — live causal proof
 
@@ -94,29 +101,45 @@ PASS
 gateway re-runs the current deterministic policy and will not sign an execution
 receipt while this abstention is active.
 
-### 1:56–2:28 — production evidence
+### 1:56–2:23 — execution / learning safety
+
+Center the external-execution evidence card and call out only:
+
+```text
+signed snapshot
+→ deterministic external resource
+→ exact-path verification
+→ signed receipt v3
+→ Outcome.UNKNOWN
+→ business_outcome_verified=false
+```
+
+Narration focus:
+
+> DecisionVault can verify a real external side effect, but transport success is
+> not business success. UNKNOWN outcomes are blocked from long-term memory and
+> calibration until an independent business verifier proves the outcome.
+
+Do not activate the production GitHub provider for the video.
+
+### 2:23–2:40 — production evidence
 
 The automation centers the static **Reproducible submission evidence** panel.
 
 Call out only the evidence already frozen in the repository:
 
-- native `semantic_embedding VECTOR(1024)`;
-- model/version-bound `semantic_embedding_space`;
-- `decision_memory_heads_scope_space_semantic_vec_idx`;
-- authenticated, producer-bound `/revoke` with append-only audit evidence;
-- CockroachDB Cloud Managed MCP Memory Auditor;
-- Memory ON benefit target accuracy `100%`;
-- failed-strategy repetition `0%`;
-- false influence `0%`;
-- cross-scope leakage `0%`;
-- production semantic benchmark `14/14`.
+- `257 / 257` tests;
+- production semantic benchmark `14 / 14`;
+- latest 30-minute hosted soak: `0` transport failures;
+- latest 30-minute hosted soak: `0` validation failures;
+- final business-memory leakage: `0` rows.
 
-### 2:28–2:40 — close
+### 2:40–2:45 — close
 
 The automation returns to the title.
 
-> DecisionVault does not just ask whether an agent can remember. It proves when
-> remembered outcomes should change behavior — and when they should not.
+> DecisionVault makes agent memory useful enough to change decisions — and
+> governed enough to trust before execution.
 
 ## Acceptance gates
 

@@ -217,7 +217,11 @@ def test_root_serves_judge_ui_without_embedding_demo_token(monkeypatch):
     assert "decision_memory_heads_scope_space_semantic_vec_idx" in response["body"]
     assert "action=ABSTAIN" in response["body"]
     assert "executable=false" in response["body"]
+    assert "257/257" in response["body"]
     assert "14/14" in response["body"]
+    assert "Outcome.UNKNOWN" in response["body"]
+    assert "business_outcome_verified=false" in response["body"]
+    assert "30-minute soak" in response["body"]
     assert "do-not-embed-this" not in response["body"]
 
 

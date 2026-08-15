@@ -10,10 +10,11 @@ RAG remembers information. DecisionVault remembers whether a decision worked.
 
 ## One-sentence pitch
 
-DecisionVault is an outcome-aware shared memory layer for agent teams that stores
-what an agent tried, whether it worked, and lets another agent use that evidence
-to change the next decision while keeping model output outside the decision
-authority boundary.
+DecisionVault is governed adaptive memory for agent teams: it stores what an
+agent tried, whether it worked, and lets later agents use that evidence to change
+decisions without allowing retrieved memory, model output, or a successful
+external side effect to silently become execution authority or a false business
+outcome.
 
 ## Inspiration
 
@@ -46,12 +47,20 @@ episodes through CockroachDB vector search. A deterministic outcome-aware policy
 then decides whether to reuse a successful strategy, avoid a failed strategy, or
 ignore weak/irrelevant memory.
 
-For the hosted general API, outcome memory is no longer accepted as a caller
-assertion. An authenticated agent first invokes a server-controlled
-payment-recovery sandbox through `/execute`; DecisionVault signs the resulting
-execution receipt and `/record` verifies that receipt before the outcome can
-enter persistent memory. Receipt IDs are unique/idempotent. This is a controlled
-hackathon executor, not a claim of integration with a real card network.
+For the hosted general API, outcome memory is not accepted as a caller assertion.
+An authenticated agent first executes through a server-controlled execution
+boundary; DecisionVault revalidates the current decision, binds execution to a
+signed snapshot, verifies the result, signs the execution receipt, and requires
+that receipt before a business outcome can enter persistent memory. Receipt IDs
+are unique/idempotent.
+
+The project also includes a real external-execution proof using a deterministic
+GitHub Contents resource. That proof deliberately returns `Outcome.UNKNOWN`:
+proving that an external side effect happened is not the same as proving that a
+payment-recovery strategy succeeded. External `UNKNOWN` receipts therefore
+cannot create L1 episodic memory and are excluded from memory-quality
+calibration. Production remains on the bounded sandbox provider until a dedicated
+least-privilege external credential is available.
 
 The live proof uses two agent identities:
 
@@ -245,6 +254,21 @@ reproducibly.
 - One-click Memory OFF vs Memory ON causal proof.
 - Systematic benchmark showing benefit, false-influence, isolation, and model-
   invariance behavior.
+- Real external side-effect proof using deterministic GitHub Contents resources,
+  exact-path replay, provider-bound receipt v3 verification, and no caller-
+  controlled destination.
+- Explicit separation between transport success and business success:
+  externally verified side effects remain `Outcome.UNKNOWN` until an independent
+  business-outcome verifier exists, so they cannot silently train long-term
+  memory or calibration.
+- Two formal 30-minute hosted production soaks. The first surfaced a real
+  cleanup-vs-consolidation race; the fix was then validated with targeted stress,
+  an orphan-derived-row sweep, and a second 30-minute soak with zero transport or
+  contract-validation failures.
+- Fail-closed readiness now verifies that runtime and consolidation connections
+  are co-located on the same CockroachDB cluster/database before declaring the
+  service ready.
+- 257/257 local tests after the latest production-hardening pass.
 - Public open-source repository with MIT license and reproducible evidence.
 
 ## What we learned
@@ -265,16 +289,20 @@ ANN candidate generation has already hidden.
 ## What's next
 
 - Extend the strategy/action contract beyond the frozen payment-recovery domain.
-- Replace the current deterministic payment-recovery sandbox with a real external
-  execution gateway / outcome verifier while preserving the signed receipt
-  contract.
+- Add an independent real business-outcome verifier for external executions so a
+  verified side effect can become SUCCESS/FAILED only when separate domain
+  evidence proves that outcome.
+- Activate the existing external provider in production only after issuing a
+  dedicated least-privilege credential; the current production provider remains
+  intentionally sandboxed.
 - Add learned or calibrated relevance thresholds while preserving the current
-  deterministic safety gate.
+  deterministic safety gate, but only after sufficiently diverse real telemetry
+  passes the existing sampling and temporal-drift gates.
 - Add richer operational metrics around recall quality and memory drift.
 - Replace the hackathon token grant mechanism with an enterprise identity / IAM
   integration and centrally managed secrets.
-- Run sustained high-RPS / long-duration soak tests beyond the bounded concurrent
-  replay, supersession, provider-degradation, and distributed rate-limit proofs.
+- Add multi-region disaster-recovery and higher-RPS load testing beyond the two
+  completed 30-minute hosted soaks and current adversarial/concurrency proofs.
 
 ## Built with
 
@@ -320,33 +348,25 @@ used only for the two atomic judge demonstrations. General `/record` and
 instructions.
 ```
 
-## <3 minute video plan — target 2:42
+## <3 minute video plan — target 2:45
 
 ### 0:00–0:18 — Problem
 
 Show title + one sentence:
 
-> RAG can remember information. DecisionVault remembers whether a decision
-> worked — and proves that the outcome changed the next action.
+> AI agents can remember past information. But can we trust remembered outcomes
+> to influence real actions? DecisionVault turns long-term memory into governed
+> decision evidence.
 
 ### 0:18–0:38 — Architecture
 
-Show one diagram/frame:
+Show the final architecture diagram from `docs/ARCHITECTURE_SUBMISSION.md`.
 
-```text
-Agent A → CockroachDB outcome memory → Agent B
-             ↓ DVI / MCP
-         semantic recall
-             ↓
-        deterministic policy
-             ↓
-     NVIDIA explanation only
-             ↓
-          AWS Lambda UI
-```
-
-State the tools explicitly: CockroachDB Cloud, Distributed Vector Indexing,
-Managed MCP Memory Auditor Agent, AWS Lambda, NVIDIA semantic embeddings.
+State only the authority path: CockroachDB stores governed outcome evidence,
+Distributed Vector Indexing recalls it, deterministic policy commits the
+decision, execution is bound to a signed snapshot and verified receipt, and the
+model is explanation-only. Mention the Managed MCP Memory Auditor as the
+independent audit path.
 
 ### 0:38–1:28 — Live causal proof
 
@@ -377,7 +397,30 @@ Agent A outcome conflicts with Agent B outcome
 gateway re-runs current policy and refuses to sign a receipt while the
 abstention remains active.
 
-### 1:56–2:28 — Production evidence
+### 1:56–2:23 — Execution / learning safety
+
+Show the static external-execution evidence card. Point to:
+
+```text
+signed snapshot
+→ deterministic external resource
+→ exact-path verification
+→ signed receipt v3
+→ Outcome.UNKNOWN
+→ business_outcome_verified=false
+```
+
+Narrate:
+
+> DecisionVault can verify a real external side effect, but transport success is
+> not business success. UNKNOWN external outcomes are blocked from long-term
+> memory and calibration until an independent business verifier proves the real
+> outcome.
+
+Do not activate the production GitHub provider for the recording; production
+remains intentionally sandboxed.
+
+### 2:23–2:40 — Production evidence
 
 After the live causal and conflict proofs, scroll to the judge UI's static
 **Reproducible submission evidence** panel. Show the current production semantic
@@ -396,25 +439,24 @@ also inspect the memory/provenance and vector plan through CockroachDB Cloud
 Managed MCP. The same panel contains the frozen benchmark numbers, so the video
 does not need to switch to a terminal or a second browser tab.
 
-Show only the most important benchmark numbers:
+Show only the most important evidence:
 
 ```text
-Benefit target accuracy: ON 100% / OFF 0%
-Failed-strategy repetition: ON 0% / OFF 100%
-False influence: 0%
-Cross-scope leakage: 0%
-Production semantic benchmark: 14/14
+257 / 257 tests
+Production semantic benchmark: 14 / 14
+30-minute hosted soak: 0 transport failures
+30-minute hosted soak: 0 validation failures
+Post-run business-memory leakage: 0 rows
 ```
 
-Clarify that the `56/56` and `28/28` figures are deterministic regression/
-causal-ablation results, while `14/14` is the separate native-1024D production
-semantic suite.
+If space allows, keep the Memory ON/OFF causal benchmark on screen but do not
+narrate every number.
 
-### 2:28–2:40 — Close
+### 2:40–2:45 — Close
 
 End with:
 
-> DecisionVault does not just ask whether an agent can remember. It proves when
-> remembered outcomes should change behavior — and when they should not.
+> DecisionVault makes agent memory useful enough to change decisions — and
+> governed enough to trust before execution.
 
 Do not use copyrighted music. Keep the final exported video below three minutes.
