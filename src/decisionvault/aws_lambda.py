@@ -508,6 +508,30 @@ def _build_consolidation_outbox() -> ConsolidationOutbox:
     )
 
 
+def _database_cluster_identity(conn) -> tuple[str, str]:
+    """Return (server_host, database_name) for a live CockroachDB connection.
+
+    Used by readiness to prove that the runtime and consolidation connections
+    share one cluster and database. All cleanup-vs-consolidation serialization
+    guarantees assume that premise; a misconfigured consolidation URL would
+    otherwise silently bypass them.
+
+    The server host comes from the psycopg connection handshake (no SQL
+    privileges required) and is stable per CockroachDB Cloud endpoint. The
+    database name comes from current_database(), which every login role can
+    read. Using crdb_internal.cluster_id() here would require admin privileges
+    and break the least-privilege runtime/consolidator identities.
+    """
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT current_database()")
+        row = cur.fetchone()
+    database_name = str(row[0])
+    info = getattr(conn, "info", None)
+    server_host = str(getattr(info, "host", "") or "") if info is not None else ""
+    return (server_host, database_name)
+
+
 def _memory_quality_calibration_settings() -> tuple[int, int, float, float]:
     lookback_days = int(
         os.getenv(
@@ -980,6 +1004,7 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
     database_ok = False
     consolidation_database_ok = False
     consolidation_identity_isolated = False
+    consolidation_database_consistent = False
     consolidation_outbox_schema_ok = False
     memory_scope_control_ok = False
     semantic_embedding_ok = False
@@ -999,6 +1024,8 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
     configured_execution_provider: str | None = None
     configured_embedding_space: str | None = None
     runtime_database_user: str | None = None
+    runtime_server_host: str | None = None
+    runtime_database_name: str | None = None
     errors: list[str] = []
 
     try:
@@ -1061,6 +1088,9 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
                     database_ok = cur.fetchone()[0] == 1
                     cur.execute("SELECT current_user")
                     runtime_database_user = str(cur.fetchone()[0])
+                    runtime_server_host, runtime_database_name = (
+                        _database_cluster_identity(conn)
+                    )
                     cur.execute(
                         "SELECT semantic_embedding_space, observed_at, recorded_at "
                         "FROM decision_memory_heads LIMIT 0"
@@ -1243,6 +1273,19 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
                         raise RuntimeError(
                             "runtime and consolidation database identities must differ"
                         )
+                    consolidation_server_host, consolidation_database_name = (
+                        _database_cluster_identity(consolidation_conn)
+                    )
+                    consolidation_database_consistent = (
+                        bool(runtime_server_host)
+                        and consolidation_server_host == runtime_server_host
+                        and consolidation_database_name == runtime_database_name
+                    )
+                    if not consolidation_database_consistent:
+                        raise RuntimeError(
+                            "runtime and consolidation connections must share "
+                            "one cluster and database"
+                        )
                     cur.execute(
                         "SELECT scope_id FROM decision_memory_consolidation_outbox LIMIT 0"
                     )
@@ -1293,6 +1336,7 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
             database_ok,
             consolidation_database_ok,
             consolidation_identity_isolated,
+            consolidation_database_consistent,
             consolidation_outbox_schema_ok,
             memory_scope_control_ok,
             governance_schema_ok,
@@ -1320,6 +1364,7 @@ def _probe_readiness() -> tuple[int, dict[str, Any]]:
             "database": database_ok,
             "consolidation_database": consolidation_database_ok,
             "consolidation_identity_isolated": consolidation_identity_isolated,
+            "consolidation_database_consistent": consolidation_database_consistent,
             "consolidation_outbox_schema": consolidation_outbox_schema_ok,
             "memory_scope_control": memory_scope_control_ok,
             "memory_governance_schema": governance_schema_ok,

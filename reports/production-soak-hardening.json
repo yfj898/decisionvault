@@ -1,0 +1,53 @@
+{
+  "duration_minutes": 30.0,
+  "finished_at": "2026-08-15T05:08:14.482827+00:00",
+  "interval_seconds": 10.0,
+  "iterations": 165,
+  "latency_ms": {
+    "/demo": {
+      "count": 83,
+      "p50": 7799.834,
+      "p95": 10771.66,
+      "p99": 11469.363
+    },
+    "/governance-demo": {
+      "count": 82,
+      "p50": 8029.4,
+      "p95": 9326.736,
+      "p99": 10459.285
+    },
+    "/health/ready": {
+      "count": 165,
+      "p50": 297.648,
+      "p95": 3930.652,
+      "p99": 4549.613
+    },
+    "overall": {
+      "count": 330,
+      "mean": 4893.61,
+      "p50": 4641.964,
+      "p95": 9326.736,
+      "p99": 10877.316
+    }
+  },
+  "passed": false,
+  "started_at": "2026-08-15T04:38:11.339380+00:00",
+  "status_counts": {
+    "/demo": {
+      "200": 83
+    },
+    "/governance-demo": {
+      "200": 81,
+      "500": 1
+    },
+    "/health/ready": {
+      "200": 165
+    }
+  },
+  "telemetry_pollution_avoided": true,
+  "transport_failures": 0,
+  "validation_failure_count": 1,
+  "validation_failure_types": [
+    "governance_contract_failed"
+  ]
+}

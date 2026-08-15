@@ -79,6 +79,8 @@ class ReadyCursor:
         self.last_sql = sql
 
     def fetchone(self):
+        if "current_database()" in self.last_sql:
+            return ("decisionvault",)
         if "WHERE semantic_embedding_space IS DISTINCT FROM" in self.last_sql:
             return (0,)
         if "FROM decision_governed_memories" in self.last_sql and "count(*)" in self.last_sql:
@@ -89,6 +91,9 @@ class ReadyCursor:
 
 
 class ReadyConnection:
+    def __init__(self, host="cluster-test-host"):
+        self.info = types.SimpleNamespace(host=host)
+
     def cursor(self):
         return ReadyCursor()
 
@@ -155,6 +160,7 @@ def test_readiness_checks_secret_database_and_embedding(monkeypatch):
     assert payload["database"] is True
     assert payload["consolidation_database"] is True
     assert payload["consolidation_identity_isolated"] is True
+    assert payload["consolidation_database_consistent"] is True
     assert payload["consolidation_outbox_schema"] is True
     assert payload["memory_scope_control"] is True
     assert payload["semantic_embedding"] is True
@@ -164,6 +170,44 @@ def test_readiness_checks_secret_database_and_embedding(monkeypatch):
     assert payload["adaptive_memory_current"] is True
     assert payload["nvidia_provider_origin"] is True
     assert payload["advisor_required_for_readiness"] is False
+
+
+def test_readiness_fails_closed_when_consolidation_database_diverges(monkeypatch):
+    aws_lambda._READINESS_CACHE = None
+    _configure_ready_security(monkeypatch)
+    monkeypatch.setattr(aws_lambda, "hydrate_runtime_secrets", lambda: None)
+
+    class DivergentCursor(ReadyCursor):
+        def fetchone(self):
+            if "current_database()" in self.last_sql:
+                return ("decisionvault",)
+            return super().fetchone()
+
+    class DivergentConnection(ReadyConnection):
+        def __init__(self):
+            super().__init__(host="cluster-other-host")
+
+        def cursor(self):
+            return DivergentCursor()
+
+    monkeypatch.setattr(
+        aws_lambda,
+        "psycopg_connection_factory",
+        lambda: (lambda: ReadyConnection()),
+    )
+    monkeypatch.setattr(
+        aws_lambda,
+        "_consolidation_connection_factory",
+        lambda: (lambda: DivergentConnection()),
+    )
+    monkeypatch.setattr(aws_lambda, "NvidiaSemanticEmbedder", ReadyEmbedder)
+    monkeypatch.setenv("NVIDIA_API_KEY", "test")
+
+    status, payload = aws_lambda._readiness()
+
+    assert status == 503
+    assert payload["status"] == "not_ready"
+    assert payload["consolidation_database_consistent"] is False
 
 
 def test_readiness_fails_closed_when_semantic_embedding_is_unavailable(monkeypatch):

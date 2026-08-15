@@ -1379,3 +1379,31 @@ def test_unknown_scheduled_task_fails_closed(monkeypatch):
     )
     assert response["statusCode"] == 400
     assert json.loads(response["body"])["error"] == "unknown_scheduled_task"
+
+
+def test_database_cluster_identity_reads_cluster_and_database():
+    class Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, _sql, _params=None):
+            pass
+
+        def fetchone(self):
+            return ("decisionvault",)
+
+    class Connection:
+        def __init__(self):
+            self.info = type(
+                "Info", (), {"host": "cluster-abc-123.cockroachlabs.cloud"}
+            )()
+
+        def cursor(self):
+            return Cursor()
+
+    server_host, database_name = aws_lambda._database_cluster_identity(Connection())
+    assert server_host == "cluster-abc-123.cockroachlabs.cloud"
+    assert database_name == "decisionvault"

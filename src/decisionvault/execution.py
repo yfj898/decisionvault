@@ -383,6 +383,11 @@ def issue_external_receipt(
         raise ValueError("external receipt provider and operation id are required")
     if not 0.0 <= effectiveness <= 1.0 or not 0.0 <= confidence <= 1.0:
         raise ValueError("external receipt scores must be between 0 and 1")
+    if outcome != Outcome.UNKNOWN or abs(effectiveness) > 1e-9:
+        raise ValueError(
+            "external receipt must not claim a business outcome; "
+            "transport success is not business success"
+        )
     if decision_revision != DECISION_CONTRACT_REVISION:
         raise ValueError("external receipt decision revision is unsupported")
     issued_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -496,6 +501,11 @@ def verify_execution_receipt(
             raise ValueError("external execution receipt is missing provider binding")
         if not isinstance(evidence, dict) or not bool(evidence.get("verified")):
             raise ValueError("external execution receipt is missing verified evidence")
+        if outcome != Outcome.UNKNOWN or abs(effectiveness) > 1e-9:
+            raise ValueError(
+                "external execution receipt must not claim a business outcome; "
+                "transport success is not business success"
+            )
         execution_evidence = evidence
     else:
         scenario_outcomes = SANDBOX_OUTCOMES.get(scenario)

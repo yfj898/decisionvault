@@ -6,6 +6,7 @@ import pytest
 
 from decisionvault.domain import Decision, DecisionGovernanceTrace, Outcome, Strategy
 from decisionvault.execution import (
+    _sign,
     decision_provenance_payload,
     issue_decision_snapshot,
     issue_external_receipt,
@@ -325,3 +326,106 @@ def test_external_receipt_rejects_provider_tampering():
             expected_agent_id="executor-a",
             now=NOW,
         )
+
+
+def test_external_receipt_issuer_rejects_claimed_business_outcome():
+    with pytest.raises(ValueError, match="must not claim a business outcome"):
+        issue_external_receipt(
+            scope_id="team-a",
+            agent_id="executor-a",
+            situation="replacement card uses stale merchant credential",
+            strategy=Strategy.REFRESH_PAYMENT_TOKEN,
+            execution_provider="github-contents-v1",
+            external_operation_id=(
+                "github:yfj898/decisionvault-execution-sandbox:"
+                "decisionvault-executions/claimed.json@blob9"
+            ),
+            execution_evidence={
+                "verified": True,
+                "object_type": "github_repository_file",
+                "repository": "yfj898/decisionvault-execution-sandbox",
+                "path": "decisionvault-executions/claimed.json",
+                "blob_sha": "blob9",
+            },
+            outcome=Outcome.SUCCESS,
+            effectiveness=0.95,
+            confidence=1.0,
+            signing_secret=SECRET,
+            decision_snapshot_id="00000000-0000-0000-0000-000000000125",
+            decision_digest="f" * 64,
+            decision_revision="governed-adaptive-memory-v2",
+            decision_agent_id="planner-a",
+            now=NOW,
+        )
+
+
+def test_external_receipt_verify_rejects_claimed_business_outcome():
+    # Simulate a hypothetical future issuer path that forgot the UNKNOWN
+    # contract: the payload is re-signed after claiming SUCCESS, so signature
+    # verification passes and the v3 outcome contract must still reject it.
+    payload = issue_external_receipt(
+        scope_id="team-a",
+        agent_id="executor-a",
+        situation="stale token",
+        strategy=Strategy.GENERIC_RETRY,
+        execution_provider="github-contents-v1",
+        external_operation_id=(
+            "github:yfj898/decisionvault-execution-sandbox:"
+            "decisionvault-executions/handwritten.json@blob10"
+        ),
+        execution_evidence={"verified": True, "object_type": "github_repository_file"},
+        outcome=Outcome.UNKNOWN,
+        effectiveness=0.0,
+        confidence=1.0,
+        signing_secret=SECRET,
+        decision_snapshot_id="00000000-0000-0000-0000-000000000126",
+        decision_digest="a" * 64,
+        decision_revision="governed-adaptive-memory-v2",
+        decision_agent_id="planner-a",
+        now=NOW,
+    )
+    payload["outcome"] = "SUCCESS"
+    payload["effectiveness"] = 0.95
+    payload["signature"] = _sign(payload, SECRET)
+    with pytest.raises(ValueError, match="must not claim a business outcome"):
+        verify_execution_receipt(
+            payload,
+            signing_secret=SECRET,
+            expected_scope_id="team-a",
+            expected_agent_id="executor-a",
+            now=NOW,
+        )
+
+
+def test_external_receipt_verify_accepts_unclaimed_transport_success():
+    payload = issue_external_receipt(
+        scope_id="team-a",
+        agent_id="executor-a",
+        situation="issuer outage",
+        strategy=Strategy.GENERIC_RETRY,
+        execution_provider="github-contents-v1",
+        external_operation_id=(
+            "github:yfj898/decisionvault-execution-sandbox:"
+            "decisionvault-executions/transport.json@blob11"
+        ),
+        execution_evidence={"verified": True, "object_type": "github_repository_file"},
+        outcome=Outcome.UNKNOWN,
+        effectiveness=0.0,
+        confidence=1.0,
+        signing_secret=SECRET,
+        decision_snapshot_id="00000000-0000-0000-0000-000000000127",
+        decision_digest="b" * 64,
+        decision_revision="governed-adaptive-memory-v2",
+        decision_agent_id="planner-a",
+        now=NOW,
+    )
+    receipt = verify_execution_receipt(
+        payload,
+        signing_secret=SECRET,
+        expected_scope_id="team-a",
+        expected_agent_id="executor-a",
+        now=NOW,
+    )
+    assert receipt.version == 3
+    assert receipt.outcome == Outcome.UNKNOWN
+    assert receipt.effectiveness == 0.0
