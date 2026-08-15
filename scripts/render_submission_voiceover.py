@@ -42,6 +42,11 @@ FFPROBE = Path(
 VOICE = os.environ.get("DECISIONVAULT_VOICE", "en-US-AndrewNeural")
 RATE = os.environ.get("DECISIONVAULT_VOICE_RATE", "+8%")
 REUSE_SEGMENTS = os.environ.get("DECISIONVAULT_REUSE_VOICE_SEGMENTS", "0") == "1"
+REGENERATE_SEGMENTS = {
+    int(value.strip())
+    for value in os.environ.get("DECISIONVAULT_REGENERATE_VOICE_SEGMENTS", "").split(",")
+    if value.strip()
+}
 
 
 SEGMENTS = [
@@ -67,7 +72,11 @@ SEGMENTS = [
         "enabled, CockroachDB recalls Agent A's governed outcome evidence, and Agent B changes "
         "to refresh payment token. The producer is visible here: recovery observer. The agents "
         "did not need to share an in-memory conversation. The behavior changed because of "
-        "durable shared memory, and the temporary demo scope is cleaned after the proof.",
+        "durable shared memory, and the temporary demo scope is cleaned after the proof. "
+        "The comparison is controlled: the problem, policy, and model stay the same. The only "
+        "changed variable is whether governed persistent memory is available. That is the "
+        "causal proof: durable memory changes the next decision without becoming execution "
+        "authority.",
     ),
     (
         80.0,
@@ -75,7 +84,8 @@ SEGMENTS = [
         "Useful memory also needs a safe failure mode. Here two governed memories conflict. "
         "DecisionVault does not guess. It returns conflict abstain, no strategy, and executable "
         "false. The execution gateway rechecks current policy, so conflicting memory cannot "
-        "force a real action.",
+        "force a real action. The conflicting memories remain visible for audit instead of "
+        "being silently discarded. Abstention is therefore an explicit, reviewable decision.",
     ),
     (
         108.0,
@@ -143,7 +153,8 @@ def main() -> int:
     media: list[Path] = []
     for index, (start, end, text) in enumerate(SEGMENTS, start=1):
         target = WORK / f"segment_{index:02d}.mp3"
-        if not (REUSE_SEGMENTS and target.is_file() and target.stat().st_size > 0):
+        regenerate = index in REGENERATE_SEGMENTS
+        if regenerate or not (REUSE_SEGMENTS and target.is_file() and target.stat().st_size > 0):
             run(
                 [
                     sys.executable,

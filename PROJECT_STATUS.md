@@ -19,8 +19,10 @@ Current local verification:
 Final clean submission screen master: PASS / 166.763000s / H.264 High / yuv420p / 1920×1080 / 30fps nominal / full decode 0 errors
 Final clean screen master SHA-256: `e87d43b01ca62f34004ec7a3563360b57d06dd6baadd314bfc88eb8947125d8f`
 Final English AI voiceover master: PASS / 166.763000s / H.264 High + AAC LC 48kHz stereo / full decode 0 errors
-Final voiceover SHA-256: `bba380ced5a4b6f3f116baf569138ac9fa29b4c82b81763254c80f49f42a68d8`
+Final voiceover artifact: `recordings/DecisionVault_Submission_Demo_2m45s_Final.mp4`
+Final voiceover SHA-256: `64b7028404603693fb0fe6f56bd7b50f05f087a37e9c69a8e965eada23827d44`
 Voiceover: `en-US-AndrewNeural` / seven timeline-aligned segments / +8% speaking rate / max volume -1.9 dB
+Final voiceover pacing polish: causal-proof long silence reduced from 17.48s to 2.79s / conflict-proof long silence reduced from 11.30s to 3.11s / clean-master H.264 packet SHA-256 unchanged
 Clean-video visual review: Chrome Translate bubble closed before the story begins / 5s frame verified clean / guided cursor points at authority, causal-memory, conflict, external-learning, and production-proof evidence
 Final recording live gates: Memory OFF→ON causal proof PASS / CONFLICT_ABSTAIN PASS / DVI+MCP+UNKNOWN production evidence PASS
 Post-record production cleanup audit: all 8 business memory/outbox tables 0 / adaptive-cloud-* 0 / quality telemetry unchanged 2/2/3

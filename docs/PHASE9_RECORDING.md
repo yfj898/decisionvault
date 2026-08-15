@@ -98,18 +98,19 @@ The same master is copied outside the repository to:
 
 ## Final English AI voiceover
 
-The accepted public-upload candidate is:
+The accepted final-final public-upload candidate is:
 
 ```text
-file: recordings/DecisionVault_Submission_Demo_2m45s_Voiceover.mp4
+file: recordings/DecisionVault_Submission_Demo_2m45s_Final.mp4
 duration: 166.763000 s (2:46.76)
 video: H.264 High / yuv420p / 1920×1080 / 30 fps nominal
 audio: AAC LC / 48 kHz / stereo
 voice: en-US-AndrewNeural
 voice rate: +8%
-audio peak: -1.9 dB
+integrated loudness: -16.1 LUFS
+true peak: -1.9 dBFS
 full-file decode errors: 0
-sha256: bba380ced5a4b6f3f116baf569138ac9fa29b4c82b81763254c80f49f42a68d8
+sha256: 64b7028404603693fb0fe6f56bd7b50f05f087a37e9c69a8e965eada23827d44
 ```
 
 The narration is generated in seven independent segments and delayed to the
@@ -118,10 +119,17 @@ segment is shorter than its visual slot, so narration never overlaps the next
 section. The video stream is copied from the clean screen master rather than
 re-encoded during voiceover muxing.
 
+The final pacing polish changed only narration segments 3 and 4. Segment 3 now
+uses 43.656 of its 46-second slot and segment 4 uses 25.344 of its 28-second
+slot. The previous long pauses were reduced from 17.48s to 2.79s in the causal
+proof and from 11.30s to 3.11s in the conflict proof. The compressed H.264 video
+packet SHA-256 is identical between the narration-free clean master and this
+final-final mux, confirming that no video frame was re-encoded or changed.
+
 The final upload copy is also stored outside the repository at:
 
 ```text
-/home/bili-guo/Videos/录屏/DecisionVault_Submission_Demo_2m47s_Voiceover.mp4
+/home/bili-guo/Videos/录屏/DecisionVault_Submission_Demo_2m47s_Final.mp4
 ```
 
 All four recording gates passed during the formal run. Post-record production

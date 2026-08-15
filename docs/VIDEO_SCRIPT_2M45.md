@@ -64,6 +64,11 @@ PASS · temporary scope cleaned
 > The producer is visible here: `recovery-observer`. The agents did not need to
 > share an in-memory conversation. The behavior changed because of durable shared
 > memory, and the temporary demo scope is cleaned after the proof.
+>
+> The comparison is controlled: the problem, policy, and model stay the same. The
+> only changed variable is whether governed persistent memory is available. That
+> is the causal proof: durable memory changes the next decision without becoming
+> execution authority.
 
 ## 1:20–1:48 — Conflict safety
 
@@ -87,7 +92,9 @@ PASS
 > Useful memory also needs a safe failure mode. Here two governed memories
 > conflict. DecisionVault does not guess. It returns `CONFLICT_ABSTAIN`, no
 > strategy, and `executable=false`. The execution gateway rechecks current policy,
-> so conflicting memory cannot force a real action.
+> so conflicting memory cannot force a real action. The conflicting memories
+> remain visible for audit instead of being silently discarded. Abstention is
+> therefore an explicit, reviewable decision.
 
 ## 1:48–2:18 — Execution and learning safety
 
