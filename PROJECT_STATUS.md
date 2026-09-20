@@ -15,7 +15,8 @@ Baseline:
 8 tests PASS
 
 Current local verification:
-257 tests PASS
+259 tests PASS
+Retrieval Ablation V2: 216 controlled runs / raw Top-K 68.1% oracle-aligned / current-head Top-K 69.4% / production dual-stage 100% decision accuracy + 100% governed evidence coverage + 0 missed-conflict rate
 Final clean submission screen master: PASS / 166.763000s / H.264 High / yuv420p / 1920×1080 / 30fps nominal / full decode 0 errors
 Final clean screen master SHA-256: `e87d43b01ca62f34004ec7a3563360b57d06dd6baadd314bfc88eb8947125d8f`
 Final English AI voiceover master: PASS / 166.763000s / H.264 High + AAC LC 48kHz stereo / full decode 0 errors

@@ -2,62 +2,88 @@
 
 [![CI](https://github.com/yfj898/decisionvault/actions/workflows/ci.yml/badge.svg)](https://github.com/yfj898/decisionvault/actions/workflows/ci.yml)
 
-**Governed adaptive memory and decision infrastructure for agent teams.**
+**Governed long-term memory and decision infrastructure for execution-capable AI agents.**
 
-DecisionVault is a new project for the **CockroachDB × AWS Hackathon — Build with Agentic Memory**.
+DecisionVault focuses on one failure mode that a conventional vector-memory demo
+usually leaves unresolved: **retrieving a similar memory does not mean that memory
+is safe or complete enough to change an executable decision**. The system combines
+semantic recall with exact governance coverage, scope isolation, conflict handling,
+revocation/supersession, signed decision snapshots and verified execution receipts.
 
-DecisionVault turns verified multi-agent experience into reusable knowledge while
-preserving provenance, conflict awareness, scope isolation, and execution safety.
-The payment-recovery agent team remains the deterministic end-to-end proof:
+The model is deliberately outside the authority boundary: NVIDIA embeddings support
+semantic retrieval and an optional advisor may explain an already-committed decision,
+but it cannot select or change the executable strategy.
 
-> An agent should remember not only what happened, but which strategy it used, whether it worked, and how that evidence should change the next decision.
+## At a glance
 
-## Frozen MVP
+| Area | Implementation |
+|---|---|
+| Core problem | Fixed Top-K retrieval can hide stale, revoked or contradictory evidence beyond the candidate budget |
+| Memory model | L1 episodic memory → L2 strategy effectiveness → governed L3 procedural / avoidance memory |
+| Correctness boundary | ANN Top-K fast path + exact governance-coverage query before deterministic resolution |
+| Execution safety | Server-bound agent identity, conflict abstention, signed decision snapshots, idempotent execution receipts |
+| Runtime stack | Python · CockroachDB Cloud / DVI · AWS Lambda · NVIDIA embeddings · CockroachDB Managed MCP |
 
-The first vertical slice demonstrates:
+## Key engineering evidence
 
-1. Agent A observes a payment-support recovery attempt.
-2. With no relevant memory, the default action is a generic retry.
-3. That action fails and Agent A persists the outcome plus producer provenance.
-4. Agent B later encounters a semantically similar case in the same shared scope.
-5. Agent B recalls Agent A's failed outcome and selects a different strategy.
-6. A memory-disabled Agent B repeats the inferior default strategy.
+- **Retrieval correctness under candidate pressure.** A 216-run controlled
+  ablation across `K={5,10,32}` and multiple crowding patterns found that the
+  current-head fixed Top-K baseline matched the exact-governance oracle on
+  **69.4%** of decisions; the production dual-stage path reached **100%**
+  oracle-aligned decisions with **0 missed conflicts** on that test matrix.
+- **Measured semantic-runtime reduction.** On the real CockroachDB + NVIDIA path,
+  five decisions per variant reduced query-embedding requests and DB connections
+  from **2 → 1** per decision and reduced median memory-recall latency from
+  **3.16 s → 1.75 s**.
+- **Hosted causal checks.** The deployed Lambda path reproduces Memory OFF →
+  `GENERIC_RETRY`, Memory ON → `REFRESH_PAYMENT_TOKEN`, while contradictory
+  governed memories produce `ABSTAIN` with `executable=false`.
 
-The local implementation is deterministic so the memory effect is testable before cloud credentials are connected.
+These are controlled ablations and deployment checks, not production-traffic or
+business-outcome claims. Reproduction details and limitations live under
+`docs/evidence/` and `reports/`.
 
-## Competition architecture
+## Architecture
 
 ```text
-Judge / user
-   |
-   v
-AWS Lambda Function URL + DecisionVault UI
-   |
-   v
-CockroachDB Cloud shared persistent memory
-   +----> Distributed Vector Index recall
-   +----> Managed MCP evidence path
-   |
-   v
-L1 governed episodic memory
-   |
-   +----> deterministic consolidation candidate
-   +----> independent promotion governance
-   |
-   v
-L2 semantic effectiveness + L3 procedural/avoidance memory
-   |
-   v
-Applicability + negative veto + hard-conflict governance
-   |
-   v
-Deterministic policy
-   |
-   +----> NVIDIA semantic embeddings + explanation-only advisor
-   |
-   v
-Strategy + grounded explanation
+authenticated agent request
+          |
+          v
+CockroachDB governed memory
+  |-- ANN Top-K fast path
+  `-- exact governance coverage
+          |
+          v
+scope / freshness / revocation / supersession / conflict checks
+          |
+          v
+deterministic strategy policy
+          |
+          +------> NVIDIA explanation-only advisor
+          |
+          v
+signed Decision Snapshot
+          |
+          v
+Execution Gateway -> signed Receipt -> verified Outcome
+                                      |
+                                      v
+                           governed long-term memory
 ```
+
+## Demo and local verification
+
+- Hosted UI: https://mfcr7b2k3j7lrwr44u35i5rchq0fbncb.lambda-url.ap-northeast-1.on.aws/
+- Public repository: https://github.com/yfj898/decisionvault
+
+```bash
+python -m pytest
+python -m decisionvault.demo
+```
+
+DecisionVault was originally built for the **CockroachDB × AWS Hackathon — Build
+with Agentic Memory**. The payment-recovery sandbox is the deterministic causal
+proof; it is not presented as a real payment-processor integration.
 
 ## Governed Adaptive Memory
 
@@ -209,7 +235,7 @@ python -m decisionvault.demo
 
 The local store is a competition-safe development fallback only. The submission version must prove the same behavior with CockroachDB Cloud.
 
-## Phase 2 — CockroachDB Cloud persistence
+## CockroachDB Cloud persistence
 
 Install the cloud extra and provide the CockroachDB Cloud connection string only
 through the environment:
@@ -235,7 +261,7 @@ stored episodes and `query` mode for recall. The old 64D projection utility is
 retained only for historical regression tests and is not used by the hosted
 semantic retrieval path.
 
-## Phase 3 — Distributed Vector Index
+## Distributed Vector Index retrieval
 
 DecisionVault now uses a real CockroachDB Distributed Vector Index whose prefix
 column matches the memory isolation boundary and whose opclass matches the cosine
@@ -288,7 +314,7 @@ beyond the ANN top-k boundary. `MemoryAuditorAgent` imports the same SQL builder
 used by `CockroachVectorMemoryStore`, so its ANN/coverage EXPLAIN requests cannot
 silently drift to a simplified query contract.
 
-## Phase 5 — Bounded model advisor
+## Bounded model advisor
 
 DecisionVault keeps model output outside the strategy authority boundary. The
 agent first recalls CockroachDB memory and commits the deterministic strategy;
@@ -412,7 +438,7 @@ Chrome at both desktop and mobile viewport sizes.
 
 See `docs/evidence/MULTI_AGENT_MEMORY_GOVERNANCE.md`.
 
-## Phase 6 — AWS Lambda deployment
+## AWS Lambda deployment and execution boundary
 
 DecisionVault is deployed as an AWS Lambda Python 3.12 function in
 `ap-northeast-1` with a Lambda Function URL. `GET /health` is public for
@@ -490,7 +516,7 @@ The live Memory ON call returned `REFRESH_PAYMENT_TOKEN` with
 `memory_influenced=false`. The temporary evidence scope was deleted afterward.
 See `docs/evidence/PHASE6_AWS_LAMBDA.md`.
 
-## Phase 7 — UI / production hardening
+## UI and production hardening
 
 The same AWS Lambda Function URL now serves a responsive judge-facing UI at `/`.
 The page contains no database/model credentials and asks for the demo token only
@@ -526,7 +552,7 @@ the hosted runtime. See
 `docs/evidence/CONCURRENCY_DEGRADATION_RATE_LIMIT.md` and the other final
 red-team evidence files.
 
-## Phase 8 — Memory benchmark and ablation
+## Memory benchmark and retrieval ablation
 
 DecisionVault now includes a reproducible behavioral benchmark that compares the
 same cases with Memory ON and Memory OFF. The benchmark deliberately measures
@@ -569,6 +595,16 @@ distractors, cross-scope filtering, contradictory outcomes, stale memory,
 supersession, and duplicate-crowding controls. All Cloud benchmark rows are
 deleted after each run.
 
+An additional **216-run retrieval-pipeline ablation** isolates bounded Top-K
+correctness under K={5,10,32} and crowding pressure={0,4,12,40}. Raw Top-K and
+current-head-only Top-K reached 68.1% and 69.4% decision accuracy against the
+exact-governance oracle; the production current-head ANN + exact threshold
+coverage path reached **100% oracle-aligned decisions, 100% governed evidence
+coverage, and 0 missed-conflict rate** in this controlled benchmark. This does
+not claim external embedding quality or production traffic prevalence. See
+`docs/evidence/RETRIEVAL_ABLATION_V2.md` and reproduce with
+`.venv/bin/python scripts/run_retrieval_ablation.py --format markdown`.
+
 Reproduce locally:
 
 ```bash
@@ -582,7 +618,7 @@ Cloud and advisor runs require their normal runtime credentials and do not store
 secrets in the reports. See `docs/evidence/PHASE8_MEMORY_ABLATION.md` and the
 post-audit corrections in `docs/evidence/FINAL_RED_TEAM_REMEDIATION.md`.
 
-## Phase 4 — CockroachDB Cloud Managed MCP
+## CockroachDB Cloud Managed MCP audit
 
 DecisionVault has also been verified through the real CockroachDB Cloud Managed
 MCP server using OAuth. A standards-compliant MCP 2025-06-18 client initialized
